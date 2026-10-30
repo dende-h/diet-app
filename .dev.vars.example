@@ -1,0 +1,3 @@
+# ローカル開発用のシークレット。このファイルを .dev.vars にコピーして値を入れる（.dev.vars はコミットしない）
+CLERK_SECRET_KEY=sk_test_xxx
+ANTHROPIC_API_KEY=sk-ant-xxx

@@ -1,0 +1,262 @@
+import { SignOutButton, useUser } from '@clerk/react'
+import { useState, type FormEvent } from 'react'
+import { ACTIVITY_LEVELS, addDays, localToday, toDayNum, weightAsOf, type Sex } from '../../shared/calc'
+import { ApiError } from '../api'
+import { formatDate } from '../lib'
+import { useStore } from '../store'
+
+export function Settings({ onboarding = false, onSaved }: { onboarding?: boolean; onSaved: () => void }) {
+  const { data } = useStore()
+  return (
+    <>
+      <header className="page-header">
+        <h1>{onboarding ? 'はじめに' : '設定'}</h1>
+        {onboarding && <p className="muted">プロフィールと目標を登録すると使い始められます。</p>}
+      </header>
+      <ProfileForm />
+      {(data!.profile || !onboarding) && <GoalForm onboarding={onboarding} onSaved={onSaved} />}
+      <AccountCard />
+    </>
+  )
+}
+
+function ProfileForm() {
+  const { data, saveProfile } = useStore()
+  const p = data!.profile
+  const [sex, setSex] = useState<Sex>(p?.sex ?? 'female')
+  const [birthYear, setBirthYear] = useState(p ? String(p.birthYear) : '')
+  const [heightCm, setHeightCm] = useState(p ? String(p.heightCm) : '')
+  const [activity, setActivity] = useState<number>(p?.activity ?? ACTIVITY_LEVELS[0].value)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    setMessage('')
+    try {
+      await saveProfile({ sex, birthYear: Number(birthYear), heightCm: Number(heightCm), activity })
+      setMessage('保存しました')
+    } catch (err) {
+      setMessage(err instanceof ApiError ? `保存できませんでした（${err.message}）` : '保存できませんでした')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form className="card form" onSubmit={submit}>
+      <div className="card-title">プロフィール</div>
+      <p className="muted small">1日の維持カロリーの計算に使います。</p>
+      <div className="field">
+        <span className="label">性別</span>
+        <div className="chips">
+          {(['female', 'male'] as const).map((s) => (
+            <button type="button" key={s} className={sex === s ? 'chip active' : 'chip'} onClick={() => setSex(s)}>
+              {s === 'female' ? '女性' : '男性'}
+            </button>
+          ))}
+        </div>
+      </div>
+      <label className="field">
+        <span className="label">生まれた年</span>
+        <input
+          type="number"
+          inputMode="numeric"
+          placeholder="例: 1990"
+          value={birthYear}
+          onChange={(e) => setBirthYear(e.target.value)}
+          required
+          min={1900}
+          max={Number(localToday().slice(0, 4))}
+        />
+      </label>
+      <label className="field">
+        <span className="label">身長 (cm)</span>
+        <input
+          type="number"
+          inputMode="decimal"
+          step="0.1"
+          placeholder="例: 160"
+          value={heightCm}
+          onChange={(e) => setHeightCm(e.target.value)}
+          required
+          min={100}
+          max={250}
+        />
+      </label>
+      <label className="field">
+        <span className="label">ふだんの活動量</span>
+        <select value={activity} onChange={(e) => setActivity(Number(e.target.value))}>
+          {ACTIVITY_LEVELS.map((a) => (
+            <option key={a.value} value={a.value}>
+              {a.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <div className="form-actions">
+        <button className="button" disabled={busy}>
+          保存
+        </button>
+        {message && <span className="muted small">{message}</span>}
+      </div>
+    </form>
+  )
+}
+
+const WEEK_PRESETS = [4, 8, 12, 16, 24]
+
+function GoalForm({ onboarding, onSaved }: { onboarding: boolean; onSaved: () => void }) {
+  const { data, saveGoal } = useStore()
+  const goal = data!.goal
+  const today = localToday()
+  const latest = data!.weights.length > 0 ? weightAsOf(data!.weights, today, 0) : 0
+  const [editing, setEditing] = useState(!goal)
+  const [startDate, setStartDate] = useState(today)
+  const [startWeight, setStartWeight] = useState(latest ? latest.toFixed(1) : '')
+  const [lossKg, setLossKg] = useState('')
+  const [endDate, setEndDate] = useState(addDays(today, 7 * 12))
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  if (goal && !editing) {
+    const weeks = (toDayNum(goal.endDate) - toDayNum(goal.startDate)) / 7
+    return (
+      <section className="card">
+        <div className="card-title">目標</div>
+        <dl className="summary">
+          <dt>期間</dt>
+          <dd>
+            {formatDate(goal.startDate)} 〜 {formatDate(goal.endDate)}（{weeks.toFixed(1)}週）
+          </dd>
+          <dt>体重</dt>
+          <dd>
+            {goal.startWeight.toFixed(1)} kg → {(goal.startWeight - goal.lossKg).toFixed(1)} kg（−{goal.lossKg.toFixed(1)}{' '}
+            kg）
+          </dd>
+        </dl>
+        <button className="button secondary" onClick={() => setEditing(true)}>
+          目標を作り直す
+        </button>
+      </section>
+    )
+  }
+
+  const sw = Number(startWeight)
+  const loss = Number(lossKg)
+  const weeks = (toDayNum(endDate) - toDayNum(startDate)) / 7
+  const valid = sw > 0 && loss > 0 && loss < sw && weeks >= 1
+  const weekly = valid ? loss / weeks : 0
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!valid) return
+    if (goal && !confirm('今の目標を置き換えますか？（体重や食事の記録はそのまま残ります）')) return
+    setBusy(true)
+    setError('')
+    try {
+      await saveGoal({ startDate, endDate, startWeight: sw, lossKg: loss })
+      setEditing(false)
+      onSaved()
+    } catch (err) {
+      setError(err instanceof ApiError ? `保存できませんでした（${err.message}）` : '保存できませんでした')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form className="card form" onSubmit={submit}>
+      <div className="card-title">目標</div>
+      <label className="field">
+        <span className="label">開始日</span>
+        <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} required />
+      </label>
+      <label className="field">
+        <span className="label">開始時の体重 (kg)</span>
+        <input
+          type="number"
+          inputMode="decimal"
+          step="0.1"
+          placeholder="例: 62.0"
+          value={startWeight}
+          onChange={(e) => setStartWeight(e.target.value)}
+          required
+        />
+      </label>
+      <label className="field">
+        <span className="label">減らしたい体重 (kg)</span>
+        <input
+          type="number"
+          inputMode="decimal"
+          step="0.1"
+          placeholder="例: 5"
+          value={lossKg}
+          onChange={(e) => setLossKg(e.target.value)}
+          required
+        />
+      </label>
+      <div className="field">
+        <span className="label">期間</span>
+        <div className="chips">
+          {WEEK_PRESETS.map((w) => (
+            <button
+              type="button"
+              key={w}
+              className={endDate === addDays(startDate, 7 * w) ? 'chip active' : 'chip'}
+              onClick={() => setEndDate(addDays(startDate, 7 * w))}
+            >
+              {w}週
+            </button>
+          ))}
+        </div>
+        <input
+          type="date"
+          value={endDate}
+          min={addDays(startDate, 7)}
+          onChange={(e) => setEndDate(e.target.value)}
+          aria-label="終了日"
+          required
+        />
+      </div>
+      {valid && (
+        <p className="preview">
+          {formatDate(endDate)}までに {(sw - loss).toFixed(1)} kg
+          <br />
+          <strong>週あたり −{weekly.toFixed(2)} kg</strong>（{weeks.toFixed(1)}週）
+        </p>
+      )}
+      {valid && weekly > sw * 0.01 && (
+        <p className="warning small">1週間に体重の1%を超えるペースです。期間を長めにするのがおすすめです。</p>
+      )}
+      {error && <p className="warning small">{error}</p>}
+      <div className="form-actions">
+        <button className="button" disabled={busy || !valid || !data!.profile}>
+          {onboarding ? 'はじめる' : '保存'}
+        </button>
+        {goal && (
+          <button type="button" className="button secondary" onClick={() => setEditing(false)}>
+            キャンセル
+          </button>
+        )}
+      </div>
+    </form>
+  )
+}
+
+function AccountCard() {
+  const { user } = useUser()
+  return (
+    <section className="card">
+      <div className="card-title">アカウント</div>
+      <p className="muted small">{user?.primaryEmailAddress?.emailAddress}</p>
+      <SignOutButton>
+        <button className="button secondary">ログアウト</button>
+      </SignOutButton>
+      <p className="muted small install-hint">
+        iPhoneはSafariの共有ボタン →「ホーム画面に追加」、AndroidはChromeのメニュー →「ホーム画面に追加」でアプリとして使えます。
+      </p>
+    </section>
+  )
+}

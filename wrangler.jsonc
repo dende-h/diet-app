@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "diet-app",
+  "main": "./worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "observability": { "enabled": true },
+  "upload_source_maps": true,
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "diet-app",
+      "database_id": "11300b09-8351-434a-a180-21a6bbc4c767",
+      "migrations_dir": "migrations"
+    }
+  ]
+  // シークレット（wrangler secret put で設定）: CLERK_SECRET_KEY, ANTHROPIC_API_KEY
+}
