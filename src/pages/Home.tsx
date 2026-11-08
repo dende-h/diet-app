@@ -138,7 +138,8 @@ function CalorieCard({
   const [photo, setPhoto] = useState<PhotoState>({ status: 'idle' })
   /** 写真判定の今日の残り回数（読み込み前は null） */
   const [photoLeft, setPhotoLeft] = useState<number | null>(null)
-  const fileRef = useRef<HTMLInputElement>(null)
+  const cameraRef = useRef<HTMLInputElement>(null)
+  const libraryRef = useRef<HTMLInputElement>(null)
   const remaining = border - total
   const over = remaining < 0
 
@@ -258,25 +259,44 @@ function CalorieCard({
       )}
 
       <form className="intake-form" onSubmit={submit}>
-        <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => void onPhoto(e)} />
-        <button
-          type="button"
-          className="button secondary wide photo-button"
-          onClick={() => fileRef.current?.click()}
-          disabled={photo.status === 'loading' || photoLeft === 0}
-        >
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path d="M4 8h3l2-3h6l2 3h3v11H4z" />
-            <circle cx="12" cy="13" r="3.5" />
-          </svg>
-          写真からカロリーを計算
-        </button>
+        {/* スマホでは capture つきの方がすぐ背面カメラを開く（撮った写真は端末に保存されない機種が多い） */}
+        <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => void onPhoto(e)} />
+        <input ref={libraryRef} type="file" accept="image/*" hidden onChange={(e) => void onPhoto(e)} />
+        <div className="photo-buttons">
+          <button
+            type="button"
+            className="button secondary photo-button"
+            onClick={() => cameraRef.current?.click()}
+            disabled={photo.status === 'loading' || photoLeft === 0}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 8h3l2-3h6l2 3h3v11H4z" />
+              <circle cx="12" cy="13" r="3.5" />
+            </svg>
+            カメラで撮る
+          </button>
+          <button
+            type="button"
+            className="button secondary photo-button"
+            onClick={() => libraryRef.current?.click()}
+            disabled={photo.status === 'loading' || photoLeft === 0}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="4" y="5" width="16" height="14" rx="2" />
+              <circle cx="9.5" cy="10" r="1.5" />
+              <path d="M4 17l5-4.5 4 3.5 2.5-2 4.5 4" />
+            </svg>
+            写真を選ぶ
+          </button>
+        </div>
         {photoLeft === 0 ? (
           <p className="muted small">
             今日の写真の判定は上限（{DAILY_ESTIMATE_LIMIT}回）に達しました。時刻とkcalを手入力してください。
           </p>
         ) : (
-          photoLeft !== null && <p className="muted small photo-left">写真の判定は今日あと{photoLeft}回</p>
+          photoLeft !== null && (
+            <p className="muted small photo-left">食事の写真からカロリーを計算します（今日あと{photoLeft}回）</p>
+          )
         )}
         {photo.status === 'loading' && <p className="muted small">AIがカロリーを計算しています…</p>}
         {photo.status === 'done' && (

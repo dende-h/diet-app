@@ -398,7 +398,15 @@ textarea:focus {
   white-space: nowrap;
 }
 
+.photo-buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
 .photo-button {
+  padding-left: 8px;
+  padding-right: 8px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
