@@ -4,20 +4,25 @@ import {
   addDays,
   calorieTarget,
   computePlan,
+  dailyWeights,
   intakeTotal,
+  slotLabel,
   weightAsOf,
   type UserData,
+  type WeightRecord,
+  type WeightSlot,
 } from '../shared/calc'
 
 const MODEL = 'claude-opus-5-5'
 
-const SYSTEM = `あなたは減量に取り組む人を毎日励ますパーソナルコーチです。
-ユーザーは毎日アプリを開いたときに、あなたからのフィードバックを1つ受け取ります。
+const SYSTEM = `あなたは減量に取り組む人に寄り添うパーソナルコーチです。
+ユーザーは毎日、朝と夜に体重を記録します。記録するたびに、あなたからのフィードバックを1つ受け取ります（1日最大2回）。
 
 書き方:
-- 日本語で200〜300字程度。見出しや箇条書き記号、Markdownは使わず、短い段落の平文で書く。
-- 前日の摂取カロリーの振り返り → 体重の流れと今週の目標への進み具合 → 今日やると良い具体的な行動を1つ、の順に。
-- 体重は日々の水分などで上下するので、1日の増減より数日〜1週間の流れを見る。
+- 日本語で150〜250字程度。見出しや箇条書き記号、Markdownは使わず、短い段落の平文で書く。
+- 朝の記録へのフィードバック: 今朝の体重と数日〜1週間の流れ、今週の目標への進み具合、前日の摂取カロリーの振り返り、今日の食事で意識すると良い具体的な行動を1つ。
+- 夜の記録へのフィードバック: 今日ここまでの摂取カロリーとボーダーの差、朝からの体重の変化、明日の朝に向けてできる具体的な行動を1つ。夜の体重は食事や水分で朝より重くなるのが普通なので、朝との差を失敗のように扱わない。
+- 体重は日々の水分などで上下するので、1回の増減より数日〜1週間の流れを見る。
 - 責めたり不安をあおったりしない。うまくいった点は具体的に褒める。
 - 記録がない日は、記録すると振り返りやすくなる、と軽く促す程度にする。
 - 極端な食事制限や無理なペースは勧めない。体調不良や医療的な判断が必要そうなら医師への相談を勧める。`
@@ -35,18 +40,35 @@ function signed(n: number, digits: number): string {
   return n > 0 ? `+${s}` : s
 }
 
-/** AIに渡すその日時点のデータの要約 */
-export function buildReport(data: UserData, today: string): string {
-  const { profile, goal, weights, intakes } = data
+/** '朝 60.2kg / 夜 60.9kg' のように、その日の記録を並べる */
+function dayWeights(records: WeightRecord[], date: string): string {
+  return records
+    .filter((r) => r.date === date)
+    .sort((a, b) => (a.slot === b.slot ? 0 : a.slot === 'morning' ? -1 : 1))
+    .map((r) => `${slotLabel(r.slot)} ${r.weight.toFixed(1)}kg`)
+    .join(' / ')
+}
+
+/** AIに渡す、今回の記録時点のデータの要約 */
+export function buildReport(data: UserData, today: string, slot: WeightSlot): string {
+  const { profile, goal, weights: records, intakes } = data
   if (!profile || !goal) throw new Error('profile and goal are required')
 
+  const weights = dailyWeights(records)
   const plan = computePlan(goal, weights, today)
   const latest = weightAsOf(weights, today, goal.startWeight)
   const target = calorieTarget(profile, latest, today)
   const activity = ACTIVITY_LEVELS.find((a) => a.value === profile.activity)?.label ?? String(profile.activity)
+  const current = records.find((r) => r.date === today && r.slot === slot)
   const lines: string[] = []
 
   lines.push(`今日: ${today}`)
+  lines.push(
+    current
+      ? `今回の記録: ${slotLabel(slot)}の体重 ${current.weight.toFixed(1)}kg`
+      : `今回の記録: ${slotLabel(slot)}の体重（記録なし）`,
+  )
+  lines.push(`今日の体重: ${dayWeights(records, today) || '記録なし'}`)
   lines.push(
     `プロフィール: ${profile.sex === 'male' ? '男性' : '女性'} / ${Number(today.slice(0, 4)) - profile.birthYear}歳 / 身長${profile.heightCm}cm / 活動レベル: ${activity}`,
   )
@@ -64,17 +86,16 @@ export function buildReport(data: UserData, today: string): string {
       `今週（第${w.index + 1}週 ${md(w.startDate)}〜${md(w.endDate)}）: 週初めの基準体重 ${w.refWeight.toFixed(1)}kg、今週の目標 -${w.targetLoss.toFixed(2)}kg（週末に ${w.targetWeight.toFixed(1)}kg）`,
     )
   }
-  const latestEntry = weights.filter((w) => w.date <= today).at(-1)
-  lines.push(latestEntry ? `最新体重: ${latestEntry.weight.toFixed(1)}kg（${md(latestEntry.date)}）` : '体重の記録はまだありません。')
   lines.push(
     `摂取ボーダー（維持カロリーの75%）: ${kcal(target.border)}（維持カロリー ${kcal(target.maintenance)}、基礎代謝 ${kcal(target.bmr)}）`,
   )
+  lines.push('目標やボーダーの計算には、その日の朝の体重（朝がなければ夜）を使っています。')
 
   lines.push('', '直近14日の体重（記録なしの日は省略）:')
   const from = addDays(today, -13)
-  const recentWeights = weights.filter((w) => w.date >= from && w.date <= today)
-  if (recentWeights.length === 0) lines.push('記録なし')
-  for (const w of recentWeights) lines.push(`${md(w.date)} ${w.weight.toFixed(1)}kg`)
+  const recentDates = [...new Set(records.filter((r) => r.date >= from && r.date <= today).map((r) => r.date))].sort()
+  if (recentDates.length === 0) lines.push('記録なし')
+  for (const d of recentDates) lines.push(`${md(d)} ${dayWeights(records, d)}`)
 
   lines.push('', '直近7日の摂取カロリー（その日の体重から計算したボーダーとの差）:')
   for (let i = 7; i >= 1; i--) {
@@ -89,12 +110,16 @@ export function buildReport(data: UserData, today: string): string {
     lines.push(`${label}: ${kcal(total)}（ボーダー比 ${signed(total - border, 0)}）`)
   }
   const todayTotal = intakeTotal(intakes, today)
-  if (todayTotal > 0) lines.push(`今日ここまで: ${kcal(todayTotal)}`)
+  lines.push(
+    todayTotal > 0
+      ? `今日ここまで: ${kcal(todayTotal)}（ボーダー比 ${signed(todayTotal - target.border, 0)}）`
+      : '今日ここまで: 記録なし',
+  )
 
   return lines.join('\n')
 }
 
-export async function generateFeedback(apiKey: string, data: UserData, today: string): Promise<string> {
+export async function generateFeedback(apiKey: string, data: UserData, today: string, slot: WeightSlot): Promise<string> {
   const client = new Anthropic({ apiKey })
   const response = await client.beta.messages.create({
     model: MODEL,
@@ -106,7 +131,7 @@ export async function generateFeedback(apiKey: string, data: UserData, today: st
     messages: [
       {
         role: 'user',
-        content: `${buildReport(data, today)}\n\n上のデータをもとに、今日のフィードバックを書いてください。`,
+        content: `${buildReport(data, today, slot)}\n\n上のデータをもとに、今回の${slotLabel(slot)}の記録へのフィードバックを書いてください。`,
       },
     ],
   })

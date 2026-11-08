@@ -5,6 +5,7 @@ import {
   calorieTarget,
   chartLines,
   computePlan,
+  dailyWeights,
   isValidDate,
   movingAverage,
   refWeightAt,
@@ -131,5 +132,20 @@ describe('chart lines', () => {
     // 開始点 + 2週分の週末 + ゴール
     expect(lines.adjusted).toHaveLength(4)
     expect(lines.actual).toHaveLength(2)
+  })
+})
+
+describe('dailyWeights', () => {
+  it('prefers the morning weight and falls back to the evening one', () => {
+    expect(
+      dailyWeights([
+        { date: '2026-01-02', slot: 'evening', weight: 80.9 },
+        { date: '2026-01-02', slot: 'morning', weight: 80.1 },
+        { date: '2026-01-01', slot: 'evening', weight: 81.0 },
+      ]),
+    ).toEqual([
+      { date: '2026-01-01', weight: 81.0 },
+      { date: '2026-01-02', weight: 80.1 },
+    ])
   })
 })

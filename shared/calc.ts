@@ -16,9 +16,54 @@ export interface Goal {
   lossKg: number
 }
 
+/** 1日の代表値として計算に使う体重 */
 export interface WeightEntry {
   date: string
   weight: number
+}
+
+/** 体重は1日「朝」「夜」の2枠で、各枠1回だけ記録できる */
+export type WeightSlot = 'morning' | 'evening'
+
+export const WEIGHT_SLOTS: readonly { value: WeightSlot; label: string }[] = [
+  { value: 'morning', label: '朝' },
+  { value: 'evening', label: '夜' },
+]
+
+export function slotLabel(slot: WeightSlot): string {
+  return slot === 'morning' ? '朝' : '夜'
+}
+
+export function isWeightSlot(value: unknown): value is WeightSlot {
+  return value === 'morning' || value === 'evening'
+}
+
+export interface WeightRecord {
+  date: string
+  slot: WeightSlot
+  weight: number
+}
+
+/**
+ * 記録から1日1つの代表値を作る。夜は食事や水分で重くなりやすいので、
+ * 条件がそろう朝の体重を優先し、朝がない日だけ夜の体重を使う。
+ */
+export function dailyWeights(records: WeightRecord[]): WeightEntry[] {
+  const byDate = new Map<string, WeightRecord>()
+  for (const r of records) {
+    const current = byDate.get(r.date)
+    if (!current || (current.slot === 'evening' && r.slot === 'morning')) byDate.set(r.date, r)
+  }
+  return [...byDate.values()]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((r) => ({ date: r.date, weight: r.weight }))
+}
+
+/** AIフィードバック（体重を記録した枠ごとに1件） */
+export interface StoredFeedback {
+  slot: WeightSlot
+  status: 'pending' | 'done'
+  content: string
 }
 
 export interface IntakeEntry {
@@ -32,7 +77,7 @@ export interface IntakeEntry {
 export interface UserData {
   profile: Profile | null
   goal: Goal | null
-  weights: WeightEntry[]
+  weights: WeightRecord[]
   intakes: IntakeEntry[]
 }
 

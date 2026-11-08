@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { localToday } from '../shared/calc'
+import { localToday, type StoredFeedback, type WeightSlot } from '../shared/calc'
 import { useApi } from './api'
 
 export const APP_NAME = 'へるログ'
@@ -53,48 +53,85 @@ export function useRoute(): [Route, (route: Route) => void] {
   return [route, navigate]
 }
 
-export interface Feedback {
-  status: 'idle' | 'loading' | 'done' | 'error' | 'unavailable'
-  content?: string
-  retry: () => void
-}
+export type SlotFeedback = { status: 'loading' } | { status: 'done'; content: string } | { status: 'error' }
+
+type GenerateResponse = { status: 'done'; content: string } | { status: 'pending' } | { status: 'unavailable' }
 
 /**
- * その日のAIフィードバックを取得する。サーバー側で1日1件に制限しているので、
- * その日最初の呼び出しで生成され、以降は保存済みのものが返る。
+ * その日の体重の枠ごとのAIフィードバック。
+ * live（今日）のときは、記録済みでまだフィードバックがない枠を生成する。
+ * 記録した直後だけでなく、生成前にアプリを閉じた場合も次に開いたときに生成される。
  */
-export function useFeedback(date: string, enabled: boolean): Feedback {
+export function useSlotFeedbacks(date: string, recorded: WeightSlot[], live: boolean) {
+  // トークン取得関数が描画ごとに変わっても、読み込み中のリクエストを取り消さないように ref で持つ
   const api = useApi()
-  const [state, setState] = useState<Omit<Feedback, 'retry'>>({ status: 'idle' })
-  const requested = useRef<string | null>(null)
-
-  const load = useCallback(async () => {
-    setState({ status: 'loading' })
-    // 別のリクエストが生成中（pending）の間は少し待って取り直す
-    for (let attempt = 0; attempt < 15; attempt++) {
-      try {
-        const res = await api<{ status: 'done'; content: string } | { status: 'pending' } | { status: 'unavailable' }>(
-          `/feedback/${date}`,
-          { method: 'POST' },
-        )
-        if (res.status !== 'pending') {
-          setState(res)
-          return
-        }
-      } catch {
-        setState({ status: 'error' })
-        return
-      }
-      await new Promise((r) => setTimeout(r, 4000))
-    }
-    setState({ status: 'error' })
-  }, [api, date])
-
+  const apiRef = useRef(api)
   useEffect(() => {
-    if (!enabled || requested.current === date) return
-    requested.current = date
-    void load()
-  }, [enabled, date, load])
+    apiRef.current = api
+  })
+  const [items, setItems] = useState<Record<string, SlotFeedback>>({})
+  const [loadedDates, setLoadedDates] = useState<Record<string, true>>({})
+  const started = useRef(new Set<string>())
 
-  return { ...state, retry: () => void load() }
+  const put = useCallback((key: string, value: SlotFeedback) => setItems((s) => ({ ...s, [key]: value })), [])
+
+  const generate = useCallback(
+    async (d: string, slot: WeightSlot) => {
+      const key = `${d}:${slot}`
+      put(key, { status: 'loading' })
+      // 別のリクエストが生成中（pending）の間は少し待って取り直す
+      for (let attempt = 0; attempt < 15; attempt++) {
+        try {
+          const res = await apiRef.current<GenerateResponse>(`/feedbacks/${d}/${slot}`, { method: 'POST' })
+          if (res.status === 'done') return put(key, { status: 'done', content: res.content })
+          if (res.status === 'unavailable') break
+        } catch {
+          break
+        }
+        await new Promise((r) => setTimeout(r, 4000))
+      }
+      put(key, { status: 'error' })
+    },
+    [put],
+  )
+
+  // その日の保存済みフィードバックを読む
+  useEffect(() => {
+    if (loadedDates[date]) return
+    let cancelled = false
+    const markLoaded = () => setLoadedDates((s) => ({ ...s, [date]: true }))
+    apiRef.current<{ feedbacks: StoredFeedback[] }>(`/feedbacks/${date}`)
+      .then((res) => {
+        if (cancelled) return
+        setItems((s) => {
+          const next = { ...s }
+          for (const f of res.feedbacks) next[`${date}:${f.slot}`] = { status: 'done', content: f.content }
+          return next
+        })
+        markLoaded()
+      })
+      .catch(() => {
+        if (!cancelled) markLoaded()
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [date, loadedDates])
+
+  const pending = live && loadedDates[date] ? recorded.filter((slot) => !items[`${date}:${slot}`]) : []
+  const pendingKey = pending.join(',')
+  useEffect(() => {
+    if (!pendingKey) return
+    for (const slot of pendingKey.split(',') as WeightSlot[]) {
+      const key = `${date}:${slot}`
+      if (started.current.has(key)) continue
+      started.current.add(key)
+      void generate(date, slot)
+    }
+  }, [date, pendingKey, generate])
+
+  return {
+    get: (slot: WeightSlot): SlotFeedback | undefined => items[`${date}:${slot}`],
+    retry: (slot: WeightSlot) => void generate(date, slot),
+  }
 }

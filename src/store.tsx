@@ -1,20 +1,34 @@
 import { createContext, use, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import type { Goal, IntakeEntry, Profile, UserData, WeightEntry } from '../shared/calc'
-import { useApi } from './api'
+import {
+  dailyWeights,
+  type Goal,
+  type IntakeEntry,
+  type Profile,
+  type UserData,
+  type WeightEntry,
+  type WeightRecord,
+  type WeightSlot,
+} from '../shared/calc'
+import { ApiError, useApi } from './api'
 
 interface Store {
   data: UserData | null
+  /** 1日1つの体重（朝を優先し、なければ夜）。カロリーや週の目標、グラフの計算に使う */
+  daily: WeightEntry[]
   error: string | null
   reload: () => Promise<void>
   saveProfile: (profile: Profile) => Promise<void>
   saveGoal: (goal: Goal) => Promise<void>
-  saveWeight: (date: string, weight: number) => Promise<void>
-  deleteWeight: (date: string) => Promise<void>
+  /** 記録済みの枠には記録できない（AlreadyRecorded を投げる） */
+  recordWeight: (date: string, slot: WeightSlot, weight: number) => Promise<void>
   addIntake: (date: string, kcal: number, label: string) => Promise<void>
   deleteIntake: (id: number) => Promise<void>
 }
 
 const StoreContext = createContext<Store | null>(null)
+
+/** ほかの端末などで、その枠がすでに記録されていた */
+export class AlreadyRecorded extends Error {}
 
 export function useStore(): Store {
   const store = use(StoreContext)
@@ -43,9 +57,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   const update = (fn: (d: UserData) => UserData) => setData((d) => (d ? fn(d) : d))
 
+  const daily = useMemo(() => dailyWeights(data?.weights ?? []), [data])
+
   const store = useMemo<Store>(
     () => ({
       data,
+      daily,
       error,
       reload,
       async saveProfile(profile) {
@@ -56,16 +73,17 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const saved = await api<Goal>('/goal', { method: 'POST', body: goal })
         update((d) => ({ ...d, goal: saved }))
       },
-      async saveWeight(date, weight) {
-        const saved = await api<WeightEntry>(`/weights/${date}`, { method: 'PUT', body: { weight } })
-        update((d) => ({
-          ...d,
-          weights: [...d.weights.filter((w) => w.date !== date), saved].sort((a, b) => a.date.localeCompare(b.date)),
-        }))
-      },
-      async deleteWeight(date) {
-        await api(`/weights/${date}`, { method: 'DELETE' })
-        update((d) => ({ ...d, weights: d.weights.filter((w) => w.date !== date) }))
+      async recordWeight(date, slot, weight) {
+        try {
+          const saved = await api<WeightRecord>(`/weights/${date}/${slot}`, { method: 'POST', body: { weight } })
+          update((d) => ({ ...d, weights: [...d.weights, saved] }))
+        } catch (e) {
+          if (e instanceof ApiError && e.status === 409) {
+            await reload()
+            throw new AlreadyRecorded(e.message)
+          }
+          throw e
+        }
       },
       async addIntake(date, kcal, label) {
         const saved = await api<IntakeEntry>('/intakes', { method: 'POST', body: { date, kcal, label } })
@@ -76,7 +94,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         update((d) => ({ ...d, intakes: d.intakes.filter((i) => i.id !== id) }))
       },
     }),
-    [api, data, error, reload],
+    [api, data, daily, error, reload],
   )
 
   return <StoreContext value={store}>{children}</StoreContext>

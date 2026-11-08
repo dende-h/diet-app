@@ -6,7 +6,7 @@ import { useStore } from '../store'
 const PAGE = 30
 
 export function History({ today, onSelect }: { today: string; onSelect: (date: string) => void }) {
-  const { data } = useStore()
+  const { data, daily } = useStore()
   const { profile, goal, weights, intakes } = data!
   const [count, setCount] = useState(PAGE)
 
@@ -20,19 +20,35 @@ export function History({ today, onSelect }: { today: string; onSelect: (date: s
     <>
       <header className="page-header">
         <h1>履歴</h1>
-        <p className="muted small">日付をタップすると、その日の記録を編集できます</p>
+        <p className="muted small">日付をタップすると、その日の記録を見たり追加したりできます</p>
       </header>
       <ul className="history">
         {dates.map((date) => {
-          const weight = weights.find((w) => w.date === date)?.weight
+          const morning = weights.find((w) => w.date === date && w.slot === 'morning')?.weight
+          const evening = weights.find((w) => w.date === date && w.slot === 'evening')?.weight
           const total = intakeTotal(intakes, date)
-          const border = calorieTarget(profile!, weightAsOf(weights, date, goal!.startWeight), date).border
+          const border = calorieTarget(profile!, weightAsOf(daily, date, goal!.startWeight), date).border
           const diff = total - border
           return (
             <li key={date}>
               <button onClick={() => onSelect(date)}>
                 <span className="history-date">{formatDate(date)}</span>
-                <span className="history-weight num">{weight === undefined ? '—' : `${weight.toFixed(1)} kg`}</span>
+                <span className="history-weight num">
+                  {morning === undefined && evening === undefined ? (
+                    <span className="muted">—</span>
+                  ) : (
+                    <>
+                      <span>
+                        <span className="muted small">朝 </span>
+                        {morning === undefined ? '—' : morning.toFixed(1)}
+                      </span>
+                      <span>
+                        <span className="muted small">夜 </span>
+                        {evening === undefined ? '—' : evening.toFixed(1)}
+                      </span>
+                    </>
+                  )}
+                </span>
                 <span className="history-kcal num">
                   {total === 0 ? (
                     <span className="muted">—</span>

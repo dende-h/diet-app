@@ -432,6 +432,183 @@ select:focus {
   margin-top: 12px !important;
 }
 
+/* ---- 体重（朝・夜） ---- */
+
+.slots {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.slot-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+}
+
+.slot-label {
+  flex: none;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--accent-weak);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.slot-value {
+  flex: 1;
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.slot-value small {
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.slot-lock {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.slot-lock svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.slot-note {
+  margin-top: 10px !important;
+}
+
+/* ---- PIN ---- */
+
+.pin-screen,
+.pin-overlay {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: max(24px, env(safe-area-inset-top)) 16px max(24px, env(safe-area-inset-bottom));
+  background: var(--bg);
+}
+
+.pin-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+}
+
+.pin-screen .brand {
+  margin: 0;
+}
+
+.pin {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 320px;
+}
+
+.pin-title {
+  font-size: 1.15rem;
+}
+
+.pin-message {
+  min-height: 1.5em;
+  margin: 0;
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+.pin-message.error {
+  color: var(--over);
+}
+
+.pin-dots {
+  display: flex;
+  gap: 18px;
+  margin: 4px 0 12px;
+}
+
+.pin-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+}
+
+.pin-dot.filled {
+  background: var(--accent);
+}
+
+.pin-dots.shake {
+  animation: shake 0.35s;
+}
+
+@keyframes shake {
+  25% {
+    transform: translateX(-8px);
+  }
+  75% {
+    transform: translateX(8px);
+  }
+}
+
+.pin-keys {
+  display: grid;
+  grid-template-columns: repeat(3, 72px);
+  gap: 16px 24px;
+  justify-content: center;
+}
+
+.pin-key {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 1.6rem;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.pin-key:active {
+  background: var(--accent-weak);
+}
+
+.pin-key-del {
+  border-color: transparent;
+  background: none;
+  font-size: 1.3rem;
+  color: var(--muted);
+}
+
+.pin-footer {
+  margin-top: 8px;
+}
+
+.pin-actions {
+  margin-top: 10px;
+}
+
+.badge:not(.ok):not(.over) {
+  background: var(--border);
+  color: var(--muted);
+}
+
 /* ---- 履歴 ---- */
 
 .history {
@@ -451,7 +628,7 @@ select:focus {
 .history button {
   width: 100%;
   display: grid;
-  grid-template-columns: 5.5em 5em 1fr;
+  grid-template-columns: 5.5em 5.5em 1fr;
   align-items: center;
   gap: 8px;
   padding: 12px 16px;
@@ -459,6 +636,12 @@ select:focus {
   background: none;
   text-align: left;
   cursor: pointer;
+}
+
+.history-weight {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.35;
 }
 
 .history-kcal {
@@ -516,6 +699,7 @@ select:focus {
   padding: 6px 12px;
   font-size: 0.85rem;
   color: var(--muted);
+  white-space: nowrap;
   cursor: pointer;
 }
 
@@ -554,9 +738,58 @@ select:focus {
   stroke-dasharray: 3 4;
 }
 
+.chart .grid-x {
+  stroke-dasharray: 2 4;
+}
+
+.chart .grid-base {
+  stroke: var(--muted);
+  opacity: 0.6;
+}
+
+.chart .axis {
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+
 .chart text {
   fill: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
+}
+
+.chart .tick {
+  font-variant-numeric: tabular-nums;
+}
+
+.chart .axis-title {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.chart .marker text {
+  fill: var(--text);
+  font-weight: 600;
+}
+
+.graph-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px;
+}
+
+.graph-summary p {
+  margin: 0;
+}
+
+.graph-summary .segmented {
+  flex: none;
+}
+
+.graph-summary strong {
+  font-size: 1.05rem;
+  margin: 0 2px;
 }
 
 .chart .marker circle {

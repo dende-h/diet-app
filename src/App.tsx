@@ -1,6 +1,7 @@
 import { ClerkLoading, Show, SignIn } from '@clerk/react'
 import { useState, type ReactNode } from 'react'
-import { APP_NAME, useFeedback, useRoute, useToday, type Route } from './lib'
+import { PinGate } from './components/PinGate'
+import { APP_NAME, useRoute, useToday, type Route } from './lib'
 import { Graph } from './pages/Graph'
 import { History } from './pages/History'
 import { Home } from './pages/Home'
@@ -20,9 +21,11 @@ export default function App() {
         </main>
       </Show>
       <Show when="signed-in">
-        <DataProvider>
-          <AuthedApp />
-        </DataProvider>
+        <PinGate>
+          <DataProvider>
+            <AuthedApp />
+          </DataProvider>
+        </PinGate>
       </Show>
     </>
   )
@@ -35,8 +38,6 @@ function AuthedApp() {
   const [date, setDate] = useState(today)
   const [prevToday, setPrevToday] = useState(today)
   const ready = Boolean(data?.profile && data?.goal)
-  // 起動時に（その日まだなら）AIフィードバックを生成しておく
-  const feedback = useFeedback(today, ready)
 
   // 開いたまま日付が変わったら、表示中の日付も今日に進める
   if (prevToday !== today) {
@@ -85,7 +86,7 @@ function AuthedApp() {
       page = <Settings onSaved={() => navigate('home')} />
       break
     default:
-      page = <Home date={date} setDate={setDate} today={today} feedback={feedback} />
+      page = <Home date={date} setDate={setDate} today={today} />
   }
 
   return (

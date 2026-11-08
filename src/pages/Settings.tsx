@@ -2,6 +2,7 @@ import { SignOutButton, useUser } from '@clerk/react'
 import { useState, type FormEvent } from 'react'
 import { ACTIVITY_LEVELS, addDays, localToday, toDayNum, weightAsOf, type Sex } from '../../shared/calc'
 import { ApiError } from '../api'
+import { PinCard } from '../components/PinSettings'
 import { formatDate } from '../lib'
 import { useStore } from '../store'
 
@@ -15,6 +16,7 @@ export function Settings({ onboarding = false, onSaved }: { onboarding?: boolean
       </header>
       <ProfileForm />
       {(data!.profile || !onboarding) && <GoalForm onboarding={onboarding} onSaved={onSaved} />}
+      {!onboarding && <PinCard />}
       <AccountCard />
     </>
   )
@@ -108,10 +110,10 @@ function ProfileForm() {
 const WEEK_PRESETS = [4, 8, 12, 16, 24]
 
 function GoalForm({ onboarding, onSaved }: { onboarding: boolean; onSaved: () => void }) {
-  const { data, saveGoal } = useStore()
+  const { data, daily, saveGoal } = useStore()
   const goal = data!.goal
   const today = localToday()
-  const latest = data!.weights.length > 0 ? weightAsOf(data!.weights, today, 0) : 0
+  const latest = daily.length > 0 ? weightAsOf(daily, today, 0) : 0
   const [editing, setEditing] = useState(!goal)
   const [startDate, setStartDate] = useState(today)
   const [startWeight, setStartWeight] = useState(latest ? latest.toFixed(1) : '')

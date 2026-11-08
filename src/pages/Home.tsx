@@ -4,26 +4,32 @@ import {
   calorieTarget,
   computePlan,
   intakeTotal,
+  slotLabel,
   toDayNum,
+  WEIGHT_SLOTS,
   weightAsOf,
   type Plan,
+  type WeightRecord,
+  type WeightSlot,
 } from '../../shared/calc'
-import { formatDate, formatKcal, type Feedback } from '../lib'
-import { useStore } from '../store'
+import { formatDate, formatKcal, useSlotFeedbacks, type SlotFeedback } from '../lib'
+import { AlreadyRecorded, useStore } from '../store'
 
 interface Props {
   date: string
   setDate: (date: string) => void
   today: string
-  feedback: Feedback
 }
 
-export function Home({ date, setDate, today, feedback }: Props) {
-  const { data } = useStore()
+export function Home({ date, setDate, today }: Props) {
+  const { data, daily } = useStore()
   const { profile, goal, weights, intakes } = data!
-  const weight = weightAsOf(weights, date, goal!.startWeight)
+  const weight = weightAsOf(daily, date, goal!.startWeight)
   const target = calorieTarget(profile!, weight, date)
-  const plan = computePlan(goal!, weights, today)
+  const plan = computePlan(goal!, daily, today)
+  const records = weights.filter((w) => w.date === date)
+  const recorded = WEIGHT_SLOTS.map((s) => s.value).filter((slot) => records.some((r) => r.slot === slot))
+  const feedbacks = useSlotFeedbacks(date, recorded, date === today)
 
   return (
     <>
@@ -42,26 +48,37 @@ export function Home({ date, setDate, today, feedback }: Props) {
         </button>
       </header>
 
-      {date === today && <FeedbackCard feedback={feedback} />}
+      <WeightCard key={date} date={date} today={today} records={records} />
+      {/* 新しい記録へのひとことを、体重のすぐ下に出す */}
+      {[...recorded].reverse().map((slot) => (
+        <FeedbackCard key={slot} slot={slot} feedback={feedbacks.get(slot)} onRetry={() => feedbacks.retry(slot)} />
+      ))}
 
       <CalorieCard date={date} border={target.border} maintenance={target.maintenance} total={intakeTotal(intakes, date)} />
-      <WeightCard key={date} date={date} saved={weights.find((w) => w.date === date)?.weight} />
-      <WeekCard plan={plan} weight={weightAsOf(weights, today, goal!.startWeight)} />
+      <WeekCard plan={plan} weight={weightAsOf(daily, today, goal!.startWeight)} />
     </>
   )
 }
 
-function FeedbackCard({ feedback }: { feedback: Feedback }) {
-  if (feedback.status === 'idle' || feedback.status === 'unavailable') return null
+function FeedbackCard({
+  slot,
+  feedback,
+  onRetry,
+}: {
+  slot: WeightSlot
+  feedback: SlotFeedback | undefined
+  onRetry: () => void
+}) {
+  if (!feedback) return null
   return (
-    <section className="card feedback">
-      <div className="card-title">今日のひとこと</div>
+    <section className="card feedback" aria-live="polite">
+      <div className="card-title">{slotLabel(slot)}のひとこと</div>
       {feedback.status === 'loading' && <p className="muted">AIがフィードバックを書いています…</p>}
       {feedback.status === 'done' && <p className="feedback-text">{feedback.content}</p>}
       {feedback.status === 'error' && (
         <p className="muted">
           フィードバックを取得できませんでした。
-          <button className="link-button" onClick={feedback.retry}>
+          <button className="link-button" onClick={onRetry}>
             もう一度
           </button>
         </p>
@@ -175,62 +192,101 @@ function CalorieCard({ date, border, maintenance, total }: { date: string; borde
   )
 }
 
-function WeightCard({ date, saved }: { date: string; saved: number | undefined }) {
-  const { saveWeight, deleteWeight } = useStore()
-  const [value, setValue] = useState(saved?.toFixed(1) ?? '')
+function WeightCard({ date, today, records }: { date: string; today: string; records: WeightRecord[] }) {
+  const open = WEIGHT_SLOTS.some((s) => !records.some((r) => r.slot === s.value))
+  return (
+    <section className="card">
+      <div className="card-title">体重</div>
+      <div className="slots">
+        {WEIGHT_SLOTS.map((s) => (
+          <SlotRow key={s.value} date={date} slot={s.value} saved={records.find((r) => r.slot === s.value)?.weight} />
+        ))}
+      </div>
+      {open && (
+        <p className="muted small slot-note">
+          朝・夜それぞれ1日1回、記録すると変更できません。
+          {date === today ? '記録するとAIからひとことが届きます。' : '過去の日の記録にはAIのひとことはつきません。'}
+        </p>
+      )}
+    </section>
+  )
+}
+
+/** 記録の並び順（日付 → 朝 → 夜） */
+function order(r: { date: string; slot: WeightSlot }): string {
+  return `${r.date}:${r.slot === 'morning' ? 0 : 1}`
+}
+
+function SlotRow({ date, slot, saved }: { date: string; slot: WeightSlot; saved: number | undefined }) {
+  const { data, recordWeight } = useStore()
+  const [value, setValue] = useState('')
   const [busy, setBusy] = useState(false)
-  const dirty = value !== (saved?.toFixed(1) ?? '')
+  const label = slotLabel(slot)
+
+  if (saved !== undefined) {
+    return (
+      <div className="slot-row">
+        <span className="slot-label">{label}</span>
+        <span className="slot-value num">
+          {saved.toFixed(1)}
+          <small> kg</small>
+        </span>
+        <span className="slot-lock muted small">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="5" y="11" width="14" height="9" rx="2" />
+            <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+          </svg>
+          記録済み
+        </span>
+      </div>
+    )
+  }
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
-    const w = Number(value)
-    if (!Number.isFinite(w) || w < 20 || w > 300) return
+    const w = Math.round(Number(value) * 10) / 10
+    if (!Number.isFinite(w) || w < 20 || w > 300) {
+      alert('20〜300 kg の範囲で入力してください')
+      return
+    }
+    // 打ち間違いに気づけるよう、直前の記録から大きく離れていたら知らせる
+    const here = order({ date, slot })
+    const prev = data!.weights.filter((r) => order(r) < here).sort((a, b) => order(a).localeCompare(order(b))).at(-1)
+    let message = `${label}の体重 ${w.toFixed(1)} kg を記録します。\n記録したあとは変更できません。`
+    if (prev && Math.abs(w - prev.weight) >= 2) {
+      const diff = w - prev.weight
+      message =
+        `前回（${formatDate(prev.date)} ${slotLabel(prev.slot)} ${prev.weight.toFixed(1)} kg）から ` +
+        `${diff > 0 ? '+' : '−'}${Math.abs(diff).toFixed(1)} kg です。入力に間違いはありませんか？\n\n${message}`
+    }
+    if (!confirm(message)) return
     setBusy(true)
     try {
-      await saveWeight(date, Math.round(w * 10) / 10)
-      setValue((Math.round(w * 10) / 10).toFixed(1))
-    } catch {
-      alert('保存できませんでした')
+      await recordWeight(date, slot, w)
+    } catch (err) {
+      alert(err instanceof AlreadyRecorded ? `${label}の体重はすでに記録されています` : '保存できませんでした')
     } finally {
       setBusy(false)
     }
   }
 
   return (
-    <section className="card">
-      <div className="card-title">体重</div>
-      <form className="input-row" onSubmit={submit}>
-        <input
-          type="number"
-          inputMode="decimal"
-          step="0.1"
-          placeholder="例: 62.4"
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          aria-label="体重(kg)"
-        />
-        <span className="unit">kg</span>
-        <button className="button" disabled={busy || !value || !dirty}>
-          {saved === undefined ? '記録' : '更新'}
-        </button>
-      </form>
-      {saved !== undefined && !dirty && (
-        <p className="muted small">
-          記録済み
-          <button
-            className="link-button"
-            onClick={() => {
-              if (confirm('この日の体重を削除しますか？')) {
-                void deleteWeight(date)
-                setValue('')
-              }
-            }}
-          >
-            削除
-          </button>
-        </p>
-      )}
-    </section>
+    <form className="slot-row" onSubmit={submit}>
+      <span className="slot-label">{label}</span>
+      <input
+        type="number"
+        inputMode="decimal"
+        step="0.1"
+        placeholder="例: 62.4"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        aria-label={`${label}の体重(kg)`}
+      />
+      <span className="unit">kg</span>
+      <button className="button" disabled={busy || !value}>
+        記録
+      </button>
+    </form>
   )
 }
 

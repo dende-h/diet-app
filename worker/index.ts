@@ -1,6 +1,14 @@
 import { verifyToken } from '@clerk/backend'
 import { Hono } from 'hono'
-import { ACTIVITY_LEVELS, addDays, isValidDate, type Goal, type Profile } from '../shared/calc'
+import {
+  ACTIVITY_LEVELS,
+  addDays,
+  isValidDate,
+  isWeightSlot,
+  type Goal,
+  type Profile,
+  type WeightSlot,
+} from '../shared/calc'
 import * as db from './db'
 import { generateFeedback } from './feedback'
 
@@ -28,6 +36,16 @@ function num(value: unknown, min: number, max: number, name: string): number {
 function date(value: unknown, name = 'date'): string {
   if (!isValidDate(value)) throw new BadRequest(`${name} must be YYYY-MM-DD`)
   return value
+}
+
+function slot(value: unknown): WeightSlot {
+  if (!isWeightSlot(value)) throw new BadRequest('slot must be morning or evening')
+  return value
+}
+
+/** サーバー時刻（UTC）の今日。端末の日付とはタイムゾーンでずれるので、前後1日の幅で比べる */
+function serverToday(): string {
+  return new Date().toISOString().slice(0, 10)
 }
 
 app.onError((err, c) => {
@@ -91,17 +109,17 @@ app.post('/goal', async (c) => {
   return c.json(goal)
 })
 
-app.put('/weights/:date', async (c) => {
+// 体重は朝・夜の枠ごとに1回だけ。記録後は変更も削除もできない
+app.post('/weights/:date/:slot', async (c) => {
   const d = date(c.req.param('date'))
+  const s = slot(c.req.param('slot'))
+  if (d > addDays(serverToday(), 1)) throw new BadRequest('未来の日付には記録できません')
   const body = await c.req.json<Record<string, unknown>>()
-  const weight = num(body.weight, 20, 300, 'weight')
-  await db.saveWeight(c.env.DB, c.get('userId'), d, weight)
-  return c.json({ date: d, weight })
-})
-
-app.delete('/weights/:date', async (c) => {
-  await db.deleteWeight(c.env.DB, c.get('userId'), date(c.req.param('date')))
-  return c.body(null, 204)
+  const record = { date: d, slot: s, weight: Math.round(num(body.weight, 20, 300, 'weight') * 10) / 10 }
+  if (!(await db.insertWeight(c.env.DB, c.get('userId'), record))) {
+    return c.json({ error: 'この枠はすでに記録済みです' }, 409)
+  }
+  return c.json(record, 201)
 })
 
 app.post('/intakes', async (c) => {
@@ -119,27 +137,34 @@ app.delete('/intakes/:id', async (c) => {
   return c.body(null, 204)
 })
 
-// その日のAIフィードバック。まだなければ生成する（1ユーザー1日1回）
-app.post('/feedback/:date', async (c) => {
+app.get('/feedbacks/:date', async (c) => {
+  const feedbacks = await db.listFeedbacks(c.env.DB, c.get('userId'), date(c.req.param('date')))
+  return c.json({ feedbacks: feedbacks.filter((f) => f.status === 'done') })
+})
+
+// 体重を記録した枠へのAIフィードバック。まだなければ生成する（枠ごとに1回なので1日最大2回）
+app.post('/feedbacks/:date/:slot', async (c) => {
   const userId = c.get('userId')
   const d = date(c.req.param('date'))
-  // 端末の日付を使うが、任意の日付で何度も生成されないようサーバー時刻の前後1日に限る
-  const serverToday = new Date().toISOString().slice(0, 10)
-  if (d < addDays(serverToday, -1) || d > addDays(serverToday, 1)) throw new BadRequest('date is out of range')
+  const s = slot(c.req.param('slot'))
+  // さかのぼって記録した過去の日では生成しない（端末の日付を使うので、サーバー時刻の前後1日に限る）
+  const today = serverToday()
+  if (d < addDays(today, -1) || d > addDays(today, 1)) throw new BadRequest('date is out of range')
 
-  const existing = await db.getFeedback(c.env.DB, userId, d)
+  const existing = await db.getFeedback(c.env.DB, userId, d, s)
   if (existing?.status === 'done') return c.json({ status: 'done', content: existing.content })
+  if (!(await db.hasWeight(c.env.DB, userId, d, s))) throw new BadRequest('先に体重を記録してください')
 
   const data = await db.loadUserData(c.env.DB, userId)
   if (!data.profile || !data.goal) return c.json({ status: 'unavailable' })
 
-  if (!(await db.claimFeedback(c.env.DB, userId, d))) return c.json({ status: 'pending' })
+  if (!(await db.claimFeedback(c.env.DB, userId, d, s))) return c.json({ status: 'pending' })
   try {
-    const content = await generateFeedback(c.env.ANTHROPIC_API_KEY, data, d)
-    await db.completeFeedback(c.env.DB, userId, d, content)
+    const content = await generateFeedback(c.env.ANTHROPIC_API_KEY, data, d, s)
+    await db.completeFeedback(c.env.DB, userId, d, s, content)
     return c.json({ status: 'done', content })
   } catch (err) {
-    await db.releaseFeedback(c.env.DB, userId, d)
+    await db.releaseFeedback(c.env.DB, userId, d, s)
     console.error('feedback generation failed', err)
     return c.json({ status: 'error' }, 502)
   }
