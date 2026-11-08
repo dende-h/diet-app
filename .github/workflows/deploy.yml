@@ -18,6 +18,14 @@ jobs:
       # 公開してよい鍵なので Variables に置く（ビルド時に埋め込まれる）
       VITE_CLERK_PUBLISHABLE_KEY: ${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}
     steps:
+      # 設定漏れは実行結果の Annotations に出す（ログはログインしないと見られないため）
+      - name: Check repository settings
+        run: |
+          missing=0
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || { echo "::error::Secret CLOUDFLARE_API_TOKEN is not set"; missing=1; }
+          [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || { echo "::error::Secret CLOUDFLARE_ACCOUNT_ID is not set"; missing=1; }
+          [ -n "$VITE_CLERK_PUBLISHABLE_KEY" ] || { echo "::error::Variable VITE_CLERK_PUBLISHABLE_KEY is not set"; missing=1; }
+          exit $missing
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
@@ -28,6 +36,6 @@ jobs:
       - run: npm run lint
       - run: npm run build
       - name: Apply D1 migrations
-        run: npx wrangler d1 migrations apply DB --remote
+        run: bash scripts/ci-wrangler.sh d1 migrations apply DB --remote
       - name: Deploy
-        run: npx wrangler deploy
+        run: bash scripts/ci-wrangler.sh deploy
