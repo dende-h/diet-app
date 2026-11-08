@@ -7,7 +7,6 @@ import type {
   StoredFeedback,
   UserData,
   WeightRecord,
-  WeightSlot,
 } from '../shared/calc'
 
 interface ProfileRow {
@@ -30,7 +29,7 @@ export async function loadUserData(db: D1Database, userId: string): Promise<User
     db
       .prepare('SELECT start_date, end_date, start_weight, loss_kg FROM goals WHERE user_id = ? ORDER BY id DESC LIMIT 1')
       .bind(userId),
-    db.prepare('SELECT date, slot, weight FROM weights WHERE user_id = ? ORDER BY date, slot DESC').bind(userId),
+    db.prepare('SELECT date, seq, time, weight FROM weights WHERE user_id = ? ORDER BY date, time, seq').bind(userId),
     db
       .prepare('SELECT id, date, time, kcal, label FROM intakes WHERE user_id = ? ORDER BY date, time, id')
       .bind(userId),
@@ -67,21 +66,35 @@ export async function saveGoal(db: D1Database, userId: string, g: Goal) {
     .run()
 }
 
-/** 体重を記録する。その枠がすでに記録済みなら何もせず false を返す（記録後は変更しない） */
-export async function insertWeight(db: D1Database, userId: string, r: WeightRecord): Promise<boolean> {
-  const result = await db
-    .prepare(
-      'INSERT INTO weights (user_id, date, slot, weight) VALUES (?, ?, ?, ?) ON CONFLICT (user_id, date, slot) DO NOTHING',
-    )
-    .bind(userId, r.date, r.slot, r.weight)
-    .run()
-  return result.meta.changes === 1
+/**
+ * 体重を記録する。その日の記録がすでに2回あれば何もせず null を返す（記録後は変更しない）。
+ * 何回目かは記録時に数え、同時に送られても主キーの重複で弾かれる。
+ */
+export async function insertWeight(
+  db: D1Database,
+  userId: string,
+  r: { date: string; time: string; weight: number },
+): Promise<WeightRecord | null> {
+  try {
+    return await db
+      .prepare(
+        `INSERT INTO weights (user_id, date, seq, time, weight)
+         SELECT ?1, ?2, COUNT(*) + 1, ?3, ?4 FROM weights WHERE user_id = ?1 AND date = ?2
+         HAVING COUNT(*) < 2
+         RETURNING date, seq, time, weight`,
+      )
+      .bind(userId, r.date, r.time, r.weight)
+      .first<WeightRecord>()
+  } catch (err) {
+    if (err instanceof Error && /UNIQUE constraint failed/.test(err.message)) return null
+    throw err
+  }
 }
 
-export async function hasWeight(db: D1Database, userId: string, date: string, slot: WeightSlot): Promise<boolean> {
+export async function hasWeight(db: D1Database, userId: string, date: string, seq: number): Promise<boolean> {
   const row = await db
-    .prepare('SELECT 1 AS found FROM weights WHERE user_id = ? AND date = ? AND slot = ?')
-    .bind(userId, date, slot)
+    .prepare('SELECT 1 AS found FROM weights WHERE user_id = ? AND date = ? AND seq = ?')
+    .bind(userId, date, seq)
     .first()
   return row !== null
 }
@@ -126,55 +139,55 @@ export async function deleteIntake(db: D1Database, userId: string, id: number) {
   await db.prepare('DELETE FROM intakes WHERE user_id = ? AND id = ?').bind(userId, id).run()
 }
 
-// ---- AIフィードバック（体重を記録した枠ごとに1件） ----
+// ---- AIフィードバック（体重の記録ごとに1件） ----
 
 export async function listFeedbacks(db: D1Database, userId: string, date: string): Promise<StoredFeedback[]> {
   const { results } = await db
-    .prepare('SELECT slot, status, content FROM feedbacks WHERE user_id = ? AND date = ?')
+    .prepare('SELECT seq, status, content FROM feedbacks WHERE user_id = ? AND date = ?')
     .bind(userId, date)
     .all<StoredFeedback>()
   return results
 }
 
-export async function getFeedback(db: D1Database, userId: string, date: string, slot: WeightSlot) {
+export async function getFeedback(db: D1Database, userId: string, date: string, seq: number) {
   return db
-    .prepare('SELECT slot, status, content FROM feedbacks WHERE user_id = ? AND date = ? AND slot = ?')
-    .bind(userId, date, slot)
+    .prepare('SELECT seq, status, content FROM feedbacks WHERE user_id = ? AND date = ? AND seq = ?')
+    .bind(userId, date, seq)
     .first<StoredFeedback>()
 }
 
 /**
- * その枠のフィードバック生成権を取る。true なら呼び出し側がAIを呼ぶ。
+ * その記録へのフィードバック生成権を取る。true なら呼び出し側がAIを呼ぶ。
  * 生成途中で落ちた pending が2分以上残っていれば取り直す。
  */
-export async function claimFeedback(db: D1Database, userId: string, date: string, slot: WeightSlot): Promise<boolean> {
+export async function claimFeedback(db: D1Database, userId: string, date: string, seq: number): Promise<boolean> {
   const inserted = await db
     .prepare(
-      "INSERT INTO feedbacks (user_id, date, slot, status) VALUES (?, ?, ?, 'pending') ON CONFLICT (user_id, date, slot) DO NOTHING",
+      "INSERT INTO feedbacks (user_id, date, seq, status) VALUES (?, ?, ?, 'pending') ON CONFLICT (user_id, date, seq) DO NOTHING",
     )
-    .bind(userId, date, slot)
+    .bind(userId, date, seq)
     .run()
   if (inserted.meta.changes === 1) return true
   const stale = await db
     .prepare(
       `UPDATE feedbacks SET created_at = datetime('now')
-       WHERE user_id = ? AND date = ? AND slot = ? AND status = 'pending' AND created_at < datetime('now', '-2 minutes')`,
+       WHERE user_id = ? AND date = ? AND seq = ? AND status = 'pending' AND created_at < datetime('now', '-2 minutes')`,
     )
-    .bind(userId, date, slot)
+    .bind(userId, date, seq)
     .run()
   return stale.meta.changes === 1
 }
 
-export async function completeFeedback(db: D1Database, userId: string, date: string, slot: WeightSlot, content: string) {
+export async function completeFeedback(db: D1Database, userId: string, date: string, seq: number, content: string) {
   await db
-    .prepare("UPDATE feedbacks SET content = ?, status = 'done' WHERE user_id = ? AND date = ? AND slot = ?")
-    .bind(content, userId, date, slot)
+    .prepare("UPDATE feedbacks SET content = ?, status = 'done' WHERE user_id = ? AND date = ? AND seq = ?")
+    .bind(content, userId, date, seq)
     .run()
 }
 
-export async function releaseFeedback(db: D1Database, userId: string, date: string, slot: WeightSlot) {
+export async function releaseFeedback(db: D1Database, userId: string, date: string, seq: number) {
   await db
-    .prepare("DELETE FROM feedbacks WHERE user_id = ? AND date = ? AND slot = ? AND status = 'pending'")
-    .bind(userId, date, slot)
+    .prepare("DELETE FROM feedbacks WHERE user_id = ? AND date = ? AND seq = ? AND status = 'pending'")
+    .bind(userId, date, seq)
     .run()
 }

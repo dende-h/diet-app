@@ -6,10 +6,10 @@ const data: UserData = {
   profile: { sex: 'female', birthYear: 1992, heightCm: 158, activity: 1.375 },
   goal: { startDate: '2026-10-01', endDate: '2026-12-24', startWeight: 62, lossKg: 5 },
   weights: [
-    { date: '2026-10-22', slot: 'morning', weight: 60.6 },
-    { date: '2026-10-29', slot: 'evening', weight: 61.1 },
-    { date: '2026-10-29', slot: 'morning', weight: 60.4 },
-    { date: '2026-10-30', slot: 'morning', weight: 60.2 },
+    { date: '2026-10-22', seq: 1, time: '07:00', weight: 60.6 },
+    { date: '2026-10-29', seq: 1, time: '22:15', weight: 61.1 },
+    { date: '2026-10-29', seq: 2, time: '06:50', weight: 60.4 },
+    { date: '2026-10-30', seq: 1, time: '07:05', weight: 60.2 },
   ],
   intakes: [
     { id: 1, date: '2026-10-29', time: '19:30', kcal: 900, label: '夕食' },
@@ -22,7 +22,7 @@ const data: UserData = {
 }
 
 describe('buildReport', () => {
-  const report = buildReport(data, '2026-10-30', 'morning')
+  const report = buildReport(data, '2026-10-30', 1)
 
   it('summarizes the goal and the current week', () => {
     expect(report).toContain('目標: 2026-10-01 開始時 62.0kg → 2026-12-24 に 57.0kg')
@@ -30,12 +30,12 @@ describe('buildReport', () => {
   })
 
   it('names the weigh-in that triggered the feedback', () => {
-    expect(report).toContain('今回の記録: 朝の体重 60.2kg')
-    expect(report).toContain('今日の体重: 朝 60.2kg')
+    expect(report).toContain('今回の記録: 今日1回目の体重 60.2kg（07:05に計測）')
+    expect(report).toContain('今日の体重: 07:05 60.2kg')
   })
 
-  it('lists morning and evening weights per day', () => {
-    expect(report).toContain('10/29 朝 60.4kg / 夜 61.1kg')
+  it('lists each day weights in time order', () => {
+    expect(report).toContain('10/29 06:50 60.4kg / 22:15 61.1kg')
   })
 
   it('reports yesterday against the border', () => {
@@ -53,17 +53,17 @@ describe('buildReport', () => {
     expect(report).not.toContain('old')
   })
 
-  it('reports an evening weigh-in', () => {
-    const evening = buildReport(
-      { ...data, weights: [...data.weights, { date: '2026-10-30', slot: 'evening', weight: 60.9 }] },
+  it('reports a second weigh-in later in the day', () => {
+    const second = buildReport(
+      { ...data, weights: [...data.weights, { date: '2026-10-30', seq: 2, time: '21:40', weight: 60.9 }] },
       '2026-10-30',
-      'evening',
+      2,
     )
-    expect(evening).toContain('今回の記録: 夜の体重 60.9kg')
-    expect(evening).toContain('今日の体重: 朝 60.2kg / 夜 60.9kg')
+    expect(second).toContain('今回の記録: 今日2回目の体重 60.9kg（21:40に計測）')
+    expect(second).toContain('今日の体重: 07:05 60.2kg / 21:40 60.9kg')
   })
 
   it('requires profile and goal', () => {
-    expect(() => buildReport({ ...data, goal: null }, '2026-10-30', 'morning')).toThrow()
+    expect(() => buildReport({ ...data, goal: null }, '2026-10-30', 1)).toThrow()
   })
 })

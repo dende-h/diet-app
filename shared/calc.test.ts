@@ -136,12 +136,13 @@ describe('chart lines', () => {
 })
 
 describe('dailyWeights', () => {
-  it('prefers the morning weight and falls back to the evening one', () => {
+  it('uses the earliest weigh-in of each day', () => {
     expect(
       dailyWeights([
-        { date: '2026-01-02', slot: 'evening', weight: 80.9 },
-        { date: '2026-01-02', slot: 'morning', weight: 80.1 },
-        { date: '2026-01-01', slot: 'evening', weight: 81.0 },
+        // 2回目に記録したが、時刻は1回目より早い
+        { date: '2026-01-02', seq: 1, time: '22:10', weight: 80.9 },
+        { date: '2026-01-02', seq: 2, time: '06:45', weight: 80.1 },
+        { date: '2026-01-01', seq: 1, time: '21:30', weight: 81.0 },
       ]),
     ).toEqual([
       { date: '2026-01-01', weight: 81.0 },

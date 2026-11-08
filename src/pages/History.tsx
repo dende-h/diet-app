@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { addDays, calorieTarget, intakeTotal, weightAsOf } from '../../shared/calc'
+import { addDays, calorieTarget, compareRecords, intakeTotal, weightAsOf } from '../../shared/calc'
 import { formatDate, formatKcal } from '../lib'
 import { useStore } from '../store'
 
@@ -24,8 +24,7 @@ export function History({ today, onSelect }: { today: string; onSelect: (date: s
       </header>
       <ul className="history">
         {dates.map((date) => {
-          const morning = weights.find((w) => w.date === date && w.slot === 'morning')?.weight
-          const evening = weights.find((w) => w.date === date && w.slot === 'evening')?.weight
+          const dayWeights = weights.filter((w) => w.date === date).sort(compareRecords)
           const total = intakeTotal(intakes, date)
           const border = calorieTarget(profile!, weightAsOf(daily, date, goal!.startWeight), date).border
           const diff = total - border
@@ -34,19 +33,15 @@ export function History({ today, onSelect }: { today: string; onSelect: (date: s
               <button onClick={() => onSelect(date)}>
                 <span className="history-date">{formatDate(date)}</span>
                 <span className="history-weight num">
-                  {morning === undefined && evening === undefined ? (
+                  {dayWeights.length === 0 ? (
                     <span className="muted">—</span>
                   ) : (
-                    <>
-                      <span>
-                        <span className="muted small">朝 </span>
-                        {morning === undefined ? '—' : morning.toFixed(1)}
+                    dayWeights.map((w) => (
+                      <span key={w.seq}>
+                        <span className="muted small">{w.time} </span>
+                        {w.weight.toFixed(1)}
                       </span>
-                      <span>
-                        <span className="muted small">夜 </span>
-                        {evening === undefined ? '—' : evening.toFixed(1)}
-                      </span>
-                    </>
+                    ))
                   )}
                 </span>
                 <span className="history-kcal num">

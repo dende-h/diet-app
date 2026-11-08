@@ -475,7 +475,104 @@ textarea:focus {
   margin-top: 12px !important;
 }
 
-/* ---- 体重（朝・夜） ---- */
+/* ---- 説明（？ボタンとモーダル） ---- */
+
+.title-with-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.help-button {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid var(--muted);
+  background: none;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+  /* 小さいボタンでも指で押しやすいよう、押せる範囲を広げる */
+  position: relative;
+}
+
+.help-button::after {
+  content: '';
+  position: absolute;
+  inset: -10px;
+}
+
+.help-dialog {
+  width: calc(100% - 32px);
+  max-width: 480px;
+  max-height: 85dvh;
+  padding: 0;
+  border: 0;
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--text);
+  overflow: auto;
+}
+
+.help-dialog::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+
+.help-body {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 0.95rem;
+  line-height: 1.65;
+}
+
+.help-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.help-body h2 {
+  font-size: 1.1rem;
+  margin: 0;
+}
+
+.help-body h3 {
+  font-size: 0.95rem;
+  margin: 6px 0 0;
+  color: var(--accent);
+}
+
+.help-body p,
+.help-body ul {
+  margin: 0;
+}
+
+.help-body ul {
+  padding-left: 1.2em;
+}
+
+.help-body li + li {
+  margin-top: 4px;
+}
+
+.help-body .button {
+  margin-top: 8px;
+}
+
+.help-numbers {
+  background: var(--accent-weak);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- 体重 ---- */
 
 .slots {
   display: flex;
@@ -490,16 +587,9 @@ textarea:focus {
   min-height: 44px;
 }
 
-.slot-label {
+.slot-time {
   flex: none;
-  width: 2.25rem;
-  height: 2.25rem;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: var(--accent-weak);
-  color: var(--accent);
-  font-weight: 700;
+  width: 3.4em;
 }
 
 .slot-value {
@@ -671,7 +761,7 @@ textarea:focus {
 .history button {
   width: 100%;
   display: grid;
-  grid-template-columns: 5.5em 5.5em 1fr;
+  grid-template-columns: 5em 7em 1fr;
   align-items: center;
   gap: 8px;
   padding: 12px 16px;

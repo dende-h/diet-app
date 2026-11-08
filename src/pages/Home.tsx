@@ -6,17 +6,19 @@ import {
   intakeTotal,
   localTime,
   MAX_EXERCISE_LENGTH,
-  slotLabel,
+  MAX_WEIGHINS_PER_DAY,
+  compareRecords,
   toDayNum,
-  WEIGHT_SLOTS,
   weightAsOf,
   type CalorieEstimate,
+  type CalorieTarget,
   type Plan,
   type WeightRecord,
-  type WeightSlot,
 } from '../../shared/calc'
 import { ApiError, useApi } from '../api'
-import { formatDate, formatKcal, useSlotFeedbacks, type SlotFeedback } from '../lib'
+import { TitleWithHelp } from '../components/Help'
+import { CalorieHelp, ExerciseHelp, WeekHelp, WeightHelp } from '../components/HelpTexts'
+import { formatDate, formatKcal, useWeighInFeedbacks, type WeighInFeedback } from '../lib'
 import { photoToJpeg } from '../photo'
 import { AlreadyRecorded, useStore } from '../store'
 
@@ -32,9 +34,12 @@ export function Home({ date, setDate, today }: Props) {
   const weight = weightAsOf(daily, date, goal!.startWeight)
   const target = calorieTarget(profile!, weight, date)
   const plan = computePlan(goal!, daily, today)
-  const records = weights.filter((w) => w.date === date)
-  const recorded = WEIGHT_SLOTS.map((s) => s.value).filter((slot) => records.some((r) => r.slot === slot))
-  const feedbacks = useSlotFeedbacks(date, recorded, date === today)
+  const records = weights.filter((w) => w.date === date).sort(compareRecords)
+  const feedbacks = useWeighInFeedbacks(
+    date,
+    records.map((r) => r.seq),
+    date === today,
+  )
 
   return (
     <>
@@ -55,15 +60,15 @@ export function Home({ date, setDate, today }: Props) {
 
       <WeightCard key={date} date={date} today={today} records={records} />
       {/* 新しい記録へのひとことを、体重のすぐ下に出す */}
-      {[...recorded].reverse().map((slot) => (
-        <FeedbackCard key={slot} slot={slot} feedback={feedbacks.get(slot)} onRetry={() => feedbacks.retry(slot)} />
+      {[...records].reverse().map((r) => (
+        <FeedbackCard key={r.seq} time={r.time} feedback={feedbacks.get(r.seq)} onRetry={() => feedbacks.retry(r.seq)} />
       ))}
 
       <CalorieCard
         key={`calorie-${date}`}
         date={date}
-        border={target.border}
-        maintenance={target.maintenance}
+        target={target}
+        activity={profile!.activity}
         total={intakeTotal(intakes, date)}
       />
       <ExerciseCard key={`exercise-${date}`} date={date} today={today} />
@@ -73,18 +78,18 @@ export function Home({ date, setDate, today }: Props) {
 }
 
 function FeedbackCard({
-  slot,
+  time,
   feedback,
   onRetry,
 }: {
-  slot: WeightSlot
-  feedback: SlotFeedback | undefined
+  time: string
+  feedback: WeighInFeedback | undefined
   onRetry: () => void
 }) {
   if (!feedback) return null
   return (
     <section className="card feedback" aria-live="polite">
-      <div className="card-title">{slotLabel(slot)}のひとこと</div>
+      <div className="card-title">{time}のひとこと</div>
       {feedback.status === 'loading' && <p className="muted">AIがフィードバックを書いています…</p>}
       {feedback.status === 'done' && <p className="feedback-text">{feedback.content}</p>}
       {feedback.status === 'error' && (
@@ -105,8 +110,19 @@ type PhotoState =
   | { status: 'done'; estimate: CalorieEstimate }
   | { status: 'error'; message: string }
 
-function CalorieCard({ date, border, maintenance, total }: { date: string; border: number; maintenance: number; total: number }) {
+function CalorieCard({
+  date,
+  target,
+  activity,
+  total,
+}: {
+  date: string
+  target: CalorieTarget
+  activity: number
+  total: number
+}) {
   const { data, addIntake, deleteIntake } = useStore()
+  const border = target.border
   const api = useApi()
   const entries = data!.intakes
     .filter((i) => i.date === date)
@@ -164,7 +180,11 @@ function CalorieCard({ date, border, maintenance, total }: { date: string; borde
 
   return (
     <section className="card">
-      <div className="card-title">摂取カロリー</div>
+      <div className="card-title">
+        <TitleWithHelp title="摂取カロリー" help="摂取カロリーについて">
+          <CalorieHelp target={target} activity={activity} />
+        </TitleWithHelp>
+      </div>
       <div className={over ? 'big over' : 'big ok'}>
         {over ? (
           <>
@@ -182,7 +202,7 @@ function CalorieCard({ date, border, maintenance, total }: { date: string; borde
         <div className={over ? 'meter-fill over' : 'meter-fill'} style={{ width: `${Math.min(total / border, 1) * 100}%` }} />
       </div>
       <p className="muted small">
-        摂取 {formatKcal(total)} / ボーダー {formatKcal(border)} kcal（維持 {formatKcal(maintenance)} kcal の75%）
+        摂取 {formatKcal(total)} / ボーダー {formatKcal(border)} kcal
       </p>
 
       {entries.length > 0 && (
@@ -282,7 +302,11 @@ function ExerciseCard({ date, today }: { date: string; today: string }) {
 
   return (
     <form className="card form" onSubmit={submit}>
-      <div className="card-title">{date === today ? '今日の運動' : 'この日の運動'}</div>
+      <div className="card-title">
+        <TitleWithHelp title={date === today ? '今日の運動' : 'この日の運動'} help="運動の記録について">
+          <ExerciseHelp />
+        </TitleWithHelp>
+      </div>
       <textarea
         rows={2}
         maxLength={MAX_EXERCISE_LENGTH}
@@ -297,62 +321,50 @@ function ExerciseCard({ date, today }: { date: string; today: string }) {
         </button>
         {!dirty && saved && <span className="muted small">保存済み</span>}
       </div>
-      <p className="muted small">
-        AIのひとことの参考にします（消費カロリーは計算しません）。夜の体重を記録する前に書いておくと、夜のひとことに反映されます。
-      </p>
     </form>
   )
 }
 
 function WeightCard({ date, today, records }: { date: string; today: string; records: WeightRecord[] }) {
-  const open = WEIGHT_SLOTS.some((s) => !records.some((r) => r.slot === s.value))
+  const open = records.length < MAX_WEIGHINS_PER_DAY
   return (
     <section className="card">
-      <div className="card-title">体重</div>
-      <div className="slots">
-        {WEIGHT_SLOTS.map((s) => (
-          <SlotRow key={s.value} date={date} slot={s.value} saved={records.find((r) => r.slot === s.value)?.weight} />
-        ))}
+      <div className="card-title">
+        <TitleWithHelp title="体重" help="体重の記録について">
+          <WeightHelp />
+        </TitleWithHelp>
+        <span className="muted small">1日{MAX_WEIGHINS_PER_DAY}回まで</span>
       </div>
-      {open && (
-        <p className="muted small slot-note">
-          朝・夜それぞれ1日1回、記録すると変更できません。
-          {date === today ? '記録するとAIからひとことが届きます。' : '過去の日の記録にはAIのひとことはつきません。'}
-        </p>
-      )}
+      <div className="slots">
+        {records.map((r) => (
+          <div key={r.seq} className="slot-row">
+            <span className="slot-time num muted">{r.time}</span>
+            <span className="slot-value num">
+              {r.weight.toFixed(1)}
+              <small> kg</small>
+            </span>
+            <span className="slot-lock muted small">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="5" y="11" width="14" height="9" rx="2" />
+                <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+              </svg>
+              記録済み
+            </span>
+          </div>
+        ))}
+        {open && <WeightForm date={date} />}
+      </div>
+      {open && date !== today && <p className="muted small slot-note">過去の日の記録にはAIのひとことはつきません。</p>}
     </section>
   )
 }
 
-/** 記録の並び順（日付 → 朝 → 夜） */
-function order(r: { date: string; slot: WeightSlot }): string {
-  return `${r.date}:${r.slot === 'morning' ? 0 : 1}`
-}
-
-function SlotRow({ date, slot, saved }: { date: string; slot: WeightSlot; saved: number | undefined }) {
+function WeightForm({ date }: { date: string }) {
   const { data, recordWeight } = useStore()
+  const [time, setTime] = useState(localTime)
+  const [timeEdited, setTimeEdited] = useState(false)
   const [value, setValue] = useState('')
   const [busy, setBusy] = useState(false)
-  const label = slotLabel(slot)
-
-  if (saved !== undefined) {
-    return (
-      <div className="slot-row">
-        <span className="slot-label">{label}</span>
-        <span className="slot-value num">
-          {saved.toFixed(1)}
-          <small> kg</small>
-        </span>
-        <span className="slot-lock muted small">
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <rect x="5" y="11" width="14" height="9" rx="2" />
-            <path d="M8 11V8a4 4 0 0 1 8 0v3" />
-          </svg>
-          記録済み
-        </span>
-      </div>
-    )
-  }
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -362,21 +374,31 @@ function SlotRow({ date, slot, saved }: { date: string; slot: WeightSlot; saved:
       return
     }
     // 打ち間違いに気づけるよう、直前の記録から大きく離れていたら知らせる
-    const here = order({ date, slot })
-    const prev = data!.weights.filter((r) => order(r) < here).sort((a, b) => order(a).localeCompare(order(b))).at(-1)
-    let message = `${label}の体重 ${w.toFixed(1)} kg を記録します。\n記録したあとは変更できません。`
+    const here: WeightRecord = { date, seq: MAX_WEIGHINS_PER_DAY + 1, time, weight: w }
+    const prev = data!.weights
+      .filter((r) => compareRecords(r, here) < 0)
+      .sort(compareRecords)
+      .at(-1)
+    let message = `${time} の体重 ${w.toFixed(1)} kg を記録します。\n記録したあとは変更できません。`
     if (prev && Math.abs(w - prev.weight) >= 2) {
       const diff = w - prev.weight
       message =
-        `前回（${formatDate(prev.date)} ${slotLabel(prev.slot)} ${prev.weight.toFixed(1)} kg）から ` +
+        `前回（${formatDate(prev.date)} ${prev.time} ${prev.weight.toFixed(1)} kg）から ` +
         `${diff > 0 ? '+' : '−'}${Math.abs(diff).toFixed(1)} kg です。入力に間違いはありませんか？\n\n${message}`
     }
     if (!confirm(message)) return
     setBusy(true)
     try {
-      await recordWeight(date, slot, w)
+      await recordWeight(date, time, w)
+      setValue('')
+      setTime(localTime())
+      setTimeEdited(false)
     } catch (err) {
-      alert(err instanceof AlreadyRecorded ? `${label}の体重はすでに記録されています` : '保存できませんでした')
+      alert(
+        err instanceof AlreadyRecorded
+          ? `この日の体重はすでに${MAX_WEIGHINS_PER_DAY}回記録されています`
+          : '保存できませんでした',
+      )
     } finally {
       setBusy(false)
     }
@@ -384,18 +406,32 @@ function SlotRow({ date, slot, saved }: { date: string; slot: WeightSlot; saved:
 
   return (
     <form className="slot-row" onSubmit={submit}>
-      <span className="slot-label">{label}</span>
+      <input
+        className="time-input"
+        type="time"
+        value={time}
+        onChange={(e) => {
+          setTime(e.target.value)
+          setTimeEdited(true)
+        }}
+        aria-label="量った時刻"
+        required
+      />
       <input
         type="number"
         inputMode="decimal"
         step="0.1"
         placeholder="例: 62.4"
         value={value}
+        // 画面を開いたままでも、量った直後の時刻になるようにする
+        onFocus={() => {
+          if (!timeEdited) setTime(localTime())
+        }}
         onChange={(e) => setValue(e.target.value)}
-        aria-label={`${label}の体重(kg)`}
+        aria-label="体重(kg)"
       />
       <span className="unit">kg</span>
-      <button className="button" disabled={busy || !value}>
+      <button className="button" disabled={busy || !value || !time}>
         記録
       </button>
     </form>
@@ -403,10 +439,16 @@ function SlotRow({ date, slot, saved }: { date: string; slot: WeightSlot; saved:
 }
 
 function WeekCard({ plan, weight }: { plan: Plan; weight: number }) {
+  const title = (
+    <TitleWithHelp title="今週の目標" help="今週の目標について">
+      <WeekHelp plan={plan} />
+    </TitleWithHelp>
+  )
+
   if (plan.phase === 'before') {
     return (
       <section className="card">
-        <div className="card-title">今週の目標</div>
+        <div className="card-title">{title}</div>
         <p className="muted">目標期間はまだ始まっていません。</p>
       </section>
     )
@@ -414,7 +456,7 @@ function WeekCard({ plan, weight }: { plan: Plan; weight: number }) {
   if (plan.phase === 'finished' || !plan.current) {
     return (
       <section className="card">
-        <div className="card-title">今週の目標</div>
+        <div className="card-title">{title}</div>
         <p className="muted">目標期間が終わりました。おつかれさまでした！ 設定から新しい目標を作れます。</p>
       </section>
     )
@@ -428,7 +470,10 @@ function WeekCard({ plan, weight }: { plan: Plan; weight: number }) {
   return (
     <section className="card">
       <div className="card-title">
-        今週の目標 <span className="muted small">第{w.index + 1}週 / 全{Math.ceil(plan.totalWeeks)}週</span>
+        {title}
+        <span className="muted small">
+          第{w.index + 1}週 / 全{Math.ceil(plan.totalWeeks)}週
+        </span>
       </div>
       {w.targetLoss === 0 ? (
         <p className="big ok">
@@ -443,7 +488,7 @@ function WeekCard({ plan, weight }: { plan: Plan; weight: number }) {
       <p className="muted small">
         {formatDate(w.startDate)}〜{formatDate(w.endDate)}・週末の目標 {w.targetWeight.toFixed(1)} kg
         <br />
-        当初の計画では週 −{plan.initialWeeklyLoss.toFixed(2)} kg。毎週の体重から残りを割り直しています。
+        当初の計画は週 −{plan.initialWeeklyLoss.toFixed(2)} kg
       </p>
       {fast && <p className="warning small">ペースが速めです。無理をせず、期間の延長も検討してください。</p>}
     </section>

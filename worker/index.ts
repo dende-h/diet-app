@@ -5,11 +5,10 @@ import {
   addDays,
   isValidDate,
   isValidTime,
-  isWeightSlot,
   MAX_EXERCISE_LENGTH,
+  MAX_WEIGHINS_PER_DAY,
   type Goal,
   type Profile,
-  type WeightSlot,
 } from '../shared/calc'
 import * as db from './db'
 import { estimateCalories } from './estimate'
@@ -41,9 +40,13 @@ function date(value: unknown, name = 'date'): string {
   return value
 }
 
-function slot(value: unknown): WeightSlot {
-  if (!isWeightSlot(value)) throw new BadRequest('slot must be morning or evening')
-  return value
+/** その日の何回目の体重の記録か */
+function seq(value: unknown): number {
+  const n = Number(value)
+  if (!Number.isInteger(n) || n < 1 || n > MAX_WEIGHINS_PER_DAY) {
+    throw new BadRequest(`seq must be 1 to ${MAX_WEIGHINS_PER_DAY}`)
+  }
+  return n
 }
 
 /** サーバー時刻（UTC）の今日。端末の日付とはタイムゾーンでずれるので、前後1日の幅で比べる */
@@ -112,17 +115,16 @@ app.post('/goal', async (c) => {
   return c.json(goal)
 })
 
-// 体重は朝・夜の枠ごとに1回だけ。記録後は変更も削除もできない
-app.post('/weights/:date/:slot', async (c) => {
+// 体重は時刻つきで1日2回まで。記録後は変更も削除もできない
+app.post('/weights/:date', async (c) => {
   const d = date(c.req.param('date'))
-  const s = slot(c.req.param('slot'))
   if (d > addDays(serverToday(), 1)) throw new BadRequest('未来の日付には記録できません')
   const body = await c.req.json<Record<string, unknown>>()
-  const record = { date: d, slot: s, weight: Math.round(num(body.weight, 20, 300, 'weight') * 10) / 10 }
-  if (!(await db.insertWeight(c.env.DB, c.get('userId'), record))) {
-    return c.json({ error: 'この枠はすでに記録済みです' }, 409)
-  }
-  return c.json(record, 201)
+  if (!isValidTime(body.time)) throw new BadRequest('time must be HH:MM')
+  const weight = Math.round(num(body.weight, 20, 300, 'weight') * 10) / 10
+  const saved = await db.insertWeight(c.env.DB, c.get('userId'), { date: d, time: body.time, weight })
+  if (!saved) return c.json({ error: `この日の体重はすでに${MAX_WEIGHINS_PER_DAY}回記録しています` }, 409)
+  return c.json(saved, 201)
 })
 
 app.post('/intakes', async (c) => {
@@ -186,11 +188,11 @@ app.get('/feedbacks/:date', async (c) => {
   return c.json({ feedbacks: feedbacks.filter((f) => f.status === 'done') })
 })
 
-// 体重を記録した枠へのAIフィードバック。まだなければ生成する（枠ごとに1回なので1日最大2回）
-app.post('/feedbacks/:date/:slot', async (c) => {
+// 体重の記録へのAIフィードバック。まだなければ生成する（記録ごとに1回なので1日最大2回）
+app.post('/feedbacks/:date/:seq', async (c) => {
   const userId = c.get('userId')
   const d = date(c.req.param('date'))
-  const s = slot(c.req.param('slot'))
+  const s = seq(c.req.param('seq'))
   // さかのぼって記録した過去の日では生成しない（端末の日付を使うので、サーバー時刻の前後1日に限る）
   const today = serverToday()
   if (d < addDays(today, -1) || d > addDays(today, 1)) throw new BadRequest('date is out of range')

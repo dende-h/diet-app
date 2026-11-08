@@ -4,25 +4,26 @@ import {
   addDays,
   calorieTarget,
   computePlan,
+  compareRecords,
   dailyWeights,
   intakeTotal,
-  slotLabel,
   weightAsOf,
   type UserData,
   type WeightRecord,
-  type WeightSlot,
 } from '../shared/calc'
 
 const MODEL = 'claude-opus-5-5'
 
 const SYSTEM = `あなたは減量に取り組む人に寄り添うパーソナルコーチです。
-ユーザーは毎日、朝と夜に体重を記録します。記録するたびに、あなたからのフィードバックを1つ受け取ります（1日最大2回）。
+ユーザーは体重を時刻つきで1日2回まで記録します。記録するたびに、あなたからのフィードバックを1つ受け取ります（1日最大2回）。
+目標やボーダーの計算には、その日いちばん早い時刻の体重を使っています。
 
 書き方:
 - 日本語で150〜250字程度。見出しや箇条書き記号、Markdownは使わず、短い段落の平文で書く。
-- 朝の記録へのフィードバック: 今朝の体重と数日〜1週間の流れ、今週の目標への進み具合、前日の摂取カロリーの振り返り、今日の食事で意識すると良い具体的な行動を1つ。
-- 夜の記録へのフィードバック: 今日ここまでの摂取カロリーとボーダーの差、朝からの体重の変化、明日の朝に向けてできる具体的な行動を1つ。夜の体重は食事や水分で朝より重くなるのが普通なので、朝との差を失敗のように扱わない。
-- 体重は日々の水分などで上下するので、1回の増減より数日〜1週間の流れを見る。
+- 記録の時刻とその日の何回目かを見て、内容を変える。
+- 朝など、その日の食事前の記録: 体重と数日〜1週間の流れ、今週の目標への進み具合、前日の摂取カロリーの振り返り、今日の食事で意識すると良い具体的な行動を1つ。
+- 昼以降や夜の記録: 今日ここまでの摂取カロリーとボーダーの差、同じ日の先の記録からの変化、明日に向けてできる具体的な行動を1つ。体重は食事や水分で1日のうちに重くなっていくのが普通なので、同じ日の早い時刻との差を失敗のように扱わない。
+- 体重は日々の水分などで上下するので、1回の増減より数日〜1週間の流れを見る。日によって量った時刻が違うときは、その違いも考慮する。
 - 運動の記録（自由記述）があれば、内容に具体的に触れる。運動の消費カロリーは計算せず、摂取ボーダーを運動の分だけ増やすような助言もしない。
 - 食事の時刻が分かるときは、遅い時間の食事や間隔なども必要に応じて考慮する。
 - 責めたり不安をあおったりしない。うまくいった点は具体的に褒める。
@@ -42,17 +43,17 @@ function signed(n: number, digits: number): string {
   return n > 0 ? `+${s}` : s
 }
 
-/** '朝 60.2kg / 夜 60.9kg' のように、その日の記録を並べる */
+/** '07:10 60.2kg / 21:30 60.9kg' のように、その日の記録を時刻順に並べる */
 function dayWeights(records: WeightRecord[], date: string): string {
   return records
     .filter((r) => r.date === date)
-    .sort((a, b) => (a.slot === b.slot ? 0 : a.slot === 'morning' ? -1 : 1))
-    .map((r) => `${slotLabel(r.slot)} ${r.weight.toFixed(1)}kg`)
+    .sort(compareRecords)
+    .map((r) => `${r.time} ${r.weight.toFixed(1)}kg`)
     .join(' / ')
 }
 
-/** AIに渡す、今回の記録時点のデータの要約 */
-export function buildReport(data: UserData, today: string, slot: WeightSlot): string {
+/** AIに渡す、今回の記録時点のデータの要約。seq はその日の何回目の記録か */
+export function buildReport(data: UserData, today: string, seq: number): string {
   const { profile, goal, weights: records, intakes } = data
   if (!profile || !goal) throw new Error('profile and goal are required')
 
@@ -61,14 +62,14 @@ export function buildReport(data: UserData, today: string, slot: WeightSlot): st
   const latest = weightAsOf(weights, today, goal.startWeight)
   const target = calorieTarget(profile, latest, today)
   const activity = ACTIVITY_LEVELS.find((a) => a.value === profile.activity)?.label ?? String(profile.activity)
-  const current = records.find((r) => r.date === today && r.slot === slot)
+  const current = records.find((r) => r.date === today && r.seq === seq)
   const lines: string[] = []
 
   lines.push(`今日: ${today}`)
   lines.push(
     current
-      ? `今回の記録: ${slotLabel(slot)}の体重 ${current.weight.toFixed(1)}kg`
-      : `今回の記録: ${slotLabel(slot)}の体重（記録なし）`,
+      ? `今回の記録: 今日${seq}回目の体重 ${current.weight.toFixed(1)}kg（${current.time}に計測）`
+      : `今回の記録: 今日${seq}回目の体重（記録なし）`,
   )
   lines.push(`今日の体重: ${dayWeights(records, today) || '記録なし'}`)
   lines.push(
@@ -91,7 +92,7 @@ export function buildReport(data: UserData, today: string, slot: WeightSlot): st
   lines.push(
     `摂取ボーダー（維持カロリーの75%）: ${kcal(target.border)}（維持カロリー ${kcal(target.maintenance)}、基礎代謝 ${kcal(target.bmr)}）`,
   )
-  lines.push('目標やボーダーの計算には、その日の朝の体重（朝がなければ夜）を使っています。')
+  lines.push('目標やボーダーの計算には、その日いちばん早い時刻の体重を使っています。')
 
   lines.push('', '直近14日の体重（記録なしの日は省略）:')
   const from = addDays(today, -13)
@@ -136,7 +137,7 @@ export function buildReport(data: UserData, today: string, slot: WeightSlot): st
   return lines.join('\n')
 }
 
-export async function generateFeedback(apiKey: string, data: UserData, today: string, slot: WeightSlot): Promise<string> {
+export async function generateFeedback(apiKey: string, data: UserData, today: string, seq: number): Promise<string> {
   const client = new Anthropic({ apiKey })
   const response = await client.beta.messages.create({
     model: MODEL,
@@ -148,7 +149,7 @@ export async function generateFeedback(apiKey: string, data: UserData, today: st
     messages: [
       {
         role: 'user',
-        content: `${buildReport(data, today, slot)}\n\n上のデータをもとに、今回の${slotLabel(slot)}の記録へのフィードバックを書いてください。`,
+        content: `${buildReport(data, today, seq)}\n\n上のデータをもとに、今回の体重の記録へのフィードバックを書いてください。`,
       },
     ],
   })

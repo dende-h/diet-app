@@ -8,20 +8,19 @@ import {
   type UserData,
   type WeightEntry,
   type WeightRecord,
-  type WeightSlot,
 } from '../shared/calc'
 import { ApiError, useApi } from './api'
 
 interface Store {
   data: UserData | null
-  /** 1日1つの体重（朝を優先し、なければ夜）。カロリーや週の目標、グラフの計算に使う */
+  /** 1日1つの体重（その日いちばん早い時刻の記録）。カロリーや週の目標、グラフの計算に使う */
   daily: WeightEntry[]
   error: string | null
   reload: () => Promise<void>
   saveProfile: (profile: Profile) => Promise<void>
   saveGoal: (goal: Goal) => Promise<void>
-  /** 記録済みの枠には記録できない（AlreadyRecorded を投げる） */
-  recordWeight: (date: string, slot: WeightSlot, weight: number) => Promise<void>
+  /** その日すでに2回記録していたら記録できない（AlreadyRecorded を投げる） */
+  recordWeight: (date: string, time: string, weight: number) => Promise<void>
   addIntake: (entry: Omit<IntakeEntry, 'id'>) => Promise<void>
   deleteIntake: (id: number) => Promise<void>
   /** 空の文字列で削除 */
@@ -30,7 +29,7 @@ interface Store {
 
 const StoreContext = createContext<Store | null>(null)
 
-/** ほかの端末などで、その枠がすでに記録されていた */
+/** ほかの端末などで、その日の記録がすでに上限に達していた */
 export class AlreadyRecorded extends Error {}
 
 export function useStore(): Store {
@@ -76,9 +75,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
         const saved = await api<Goal>('/goal', { method: 'POST', body: goal })
         update((d) => ({ ...d, goal: saved }))
       },
-      async recordWeight(date, slot, weight) {
+      async recordWeight(date, time, weight) {
         try {
-          const saved = await api<WeightRecord>(`/weights/${date}/${slot}`, { method: 'POST', body: { weight } })
+          const saved = await api<WeightRecord>(`/weights/${date}`, { method: 'POST', body: { time, weight } })
           update((d) => ({ ...d, weights: [...d.weights, saved] }))
         } catch (e) {
           if (e instanceof ApiError && e.status === 409) {

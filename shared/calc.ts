@@ -22,46 +22,38 @@ export interface WeightEntry {
   weight: number
 }
 
-/** 体重は1日「朝」「夜」の2枠で、各枠1回だけ記録できる */
-export type WeightSlot = 'morning' | 'evening'
-
-export const WEIGHT_SLOTS: readonly { value: WeightSlot; label: string }[] = [
-  { value: 'morning', label: '朝' },
-  { value: 'evening', label: '夜' },
-]
-
-export function slotLabel(slot: WeightSlot): string {
-  return slot === 'morning' ? '朝' : '夜'
-}
-
-export function isWeightSlot(value: unknown): value is WeightSlot {
-  return value === 'morning' || value === 'evening'
-}
+/** 体重は時刻つきで1日2回まで記録でき、記録後は変更しない */
+export const MAX_WEIGHINS_PER_DAY = 2
 
 export interface WeightRecord {
   date: string
-  slot: WeightSlot
+  /** その日の何回目の記録か（1 か 2） */
+  seq: number
+  /** 'HH:MM' */
+  time: string
   weight: number
 }
 
+/** 記録の並び順（日付 → 時刻 → 記録した順） */
+export function compareRecords(a: WeightRecord, b: WeightRecord): number {
+  return a.date.localeCompare(b.date) || a.time.localeCompare(b.time) || a.seq - b.seq
+}
+
 /**
- * 記録から1日1つの代表値を作る。夜は食事や水分で重くなりやすいので、
- * 条件がそろう朝の体重を優先し、朝がない日だけ夜の体重を使う。
+ * 記録から1日1つの代表値を作る。体重は食事や水分で1日のうちに重くなっていくので、
+ * その日いちばん早い時刻の記録（ふつうは朝起きてすぐ）を使う。
  */
 export function dailyWeights(records: WeightRecord[]): WeightEntry[] {
   const byDate = new Map<string, WeightRecord>()
-  for (const r of records) {
-    const current = byDate.get(r.date)
-    if (!current || (current.slot === 'evening' && r.slot === 'morning')) byDate.set(r.date, r)
+  for (const r of [...records].sort(compareRecords)) {
+    if (!byDate.has(r.date)) byDate.set(r.date, r)
   }
-  return [...byDate.values()]
-    .sort((a, b) => a.date.localeCompare(b.date))
-    .map((r) => ({ date: r.date, weight: r.weight }))
+  return [...byDate.values()].map((r) => ({ date: r.date, weight: r.weight }))
 }
 
-/** AIフィードバック（体重を記録した枠ごとに1件） */
+/** AIフィードバック（体重の記録ごとに1件） */
 export interface StoredFeedback {
-  slot: WeightSlot
+  seq: number
   status: 'pending' | 'done'
   content: string
 }
