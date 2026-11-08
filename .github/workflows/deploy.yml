@@ -15,8 +15,8 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      # 公開してよい鍵なので Variables に置く（ビルド時に埋め込まれる）
-      VITE_CLERK_PUBLISHABLE_KEY: ${{ vars.VITE_CLERK_PUBLISHABLE_KEY }}
+      # 公開してよい鍵（ビルド時に埋め込まれる）。Variables と Secrets のどちらに登録してもよい
+      VITE_CLERK_PUBLISHABLE_KEY: ${{ vars.VITE_CLERK_PUBLISHABLE_KEY || secrets.VITE_CLERK_PUBLISHABLE_KEY }}
     steps:
       # 設定漏れは実行結果の Annotations に出す（ログはログインしないと見られないため）
       - name: Check repository settings
@@ -24,7 +24,7 @@ jobs:
           missing=0
           [ -n "$CLOUDFLARE_API_TOKEN" ] || { echo "::error::Secret CLOUDFLARE_API_TOKEN is not set"; missing=1; }
           [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || { echo "::error::Secret CLOUDFLARE_ACCOUNT_ID is not set"; missing=1; }
-          [ -n "$VITE_CLERK_PUBLISHABLE_KEY" ] || { echo "::error::Variable VITE_CLERK_PUBLISHABLE_KEY is not set"; missing=1; }
+          [ -n "$VITE_CLERK_PUBLISHABLE_KEY" ] || { echo "::error::VITE_CLERK_PUBLISHABLE_KEY is not set (Variable or Secret)"; missing=1; }
           exit $missing
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
