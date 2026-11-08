@@ -10,6 +10,7 @@ import {
   type Goal,
   type Profile,
 } from '../shared/calc'
+import { Cipher } from './crypto'
 import * as db from './db'
 import { estimateCalories } from './estimate'
 import { generateFeedback } from './feedback'
@@ -22,9 +23,11 @@ type Bindings = {
   ANTHROPIC_API_KEY: string
   /** 任意。カンマ区切りで指定すると、そのClerkユーザー以外はAPIを使えなくなる */
   ALLOWED_USER_IDS?: string
+  /** 体重などを暗号化する鍵（32バイトを base64 にしたもの） */
+  DATA_KEY: string
 }
 
-const app = new Hono<{ Bindings: Bindings; Variables: { userId: string } }>().basePath('/api')
+const app = new Hono<{ Bindings: Bindings; Variables: { userId: string; cipher: Cipher } }>().basePath('/api')
 
 class BadRequest extends Error {}
 
@@ -80,11 +83,17 @@ app.use('*', async (c, next) => {
   const allowed = c.env.ALLOWED_USER_IDS?.split(',').map((s) => s.trim()).filter(Boolean)
   if (allowed?.length && !allowed.includes(userId)) return c.json({ error: 'forbidden' }, 403)
   c.set('userId', userId)
+  c.set('cipher', await Cipher.create(c.env.DATA_KEY, userId))
   await next()
 })
 
 app.get('/data', async (c) => {
-  return c.json(await db.loadUserData(c.env.DB, c.get('userId')))
+  const { DB } = c.env
+  const cipher = c.get('cipher')
+  const userId = c.get('userId')
+  // 暗号化を入れる前に保存された値があれば、応答を返したあとに暗号化し直す
+  c.executionCtx.waitUntil(db.encryptLegacyRows(DB, cipher, userId).catch((err) => console.error('encrypt legacy rows failed', err)))
+  return c.json(await db.loadUserData(DB, cipher, userId))
 })
 
 app.put('/profile', async (c) => {
@@ -111,7 +120,7 @@ app.post('/goal', async (c) => {
   }
   if (goal.endDate <= addDays(goal.startDate, 6)) throw new BadRequest('期間は1週間以上にしてください')
   if (goal.lossKg >= goal.startWeight) throw new BadRequest('lossKg is too large')
-  await db.saveGoal(c.env.DB, c.get('userId'), goal)
+  await db.saveGoal(c.env.DB, c.get('cipher'), c.get('userId'), goal)
   return c.json(goal)
 })
 
@@ -122,7 +131,7 @@ app.post('/weights/:date', async (c) => {
   const body = await c.req.json<Record<string, unknown>>()
   if (!isValidTime(body.time)) throw new BadRequest('time must be HH:MM')
   const weight = Math.round(num(body.weight, 20, 300, 'weight') * 10) / 10
-  const saved = await db.insertWeight(c.env.DB, c.get('userId'), { date: d, time: body.time, weight })
+  const saved = await db.insertWeight(c.env.DB, c.get('cipher'), c.get('userId'), { date: d, time: body.time, weight })
   if (!saved) return c.json({ error: `この日の体重はすでに${MAX_WEIGHINS_PER_DAY}回記録しています` }, 409)
   return c.json(saved, 201)
 })
@@ -184,7 +193,7 @@ app.delete('/intakes/:id', async (c) => {
 })
 
 app.get('/feedbacks/:date', async (c) => {
-  const feedbacks = await db.listFeedbacks(c.env.DB, c.get('userId'), date(c.req.param('date')))
+  const feedbacks = await db.listFeedbacks(c.env.DB, c.get('cipher'), c.get('userId'), date(c.req.param('date')))
   return c.json({ feedbacks: feedbacks.filter((f) => f.status === 'done') })
 })
 
@@ -197,17 +206,17 @@ app.post('/feedbacks/:date/:seq', async (c) => {
   const today = serverToday()
   if (d < addDays(today, -1) || d > addDays(today, 1)) throw new BadRequest('date is out of range')
 
-  const existing = await db.getFeedback(c.env.DB, userId, d, s)
+  const existing = await db.getFeedback(c.env.DB, c.get('cipher'), userId, d, s)
   if (existing?.status === 'done') return c.json({ status: 'done', content: existing.content })
   if (!(await db.hasWeight(c.env.DB, userId, d, s))) throw new BadRequest('先に体重を記録してください')
 
-  const data = await db.loadUserData(c.env.DB, userId)
+  const data = await db.loadUserData(c.env.DB, c.get('cipher'), userId)
   if (!data.profile || !data.goal) return c.json({ status: 'unavailable' })
 
   if (!(await db.claimFeedback(c.env.DB, userId, d, s))) return c.json({ status: 'pending' })
   try {
     const content = await generateFeedback(c.env.ANTHROPIC_API_KEY, data, d, s)
-    await db.completeFeedback(c.env.DB, userId, d, s, content)
+    await db.completeFeedback(c.env.DB, c.get('cipher'), userId, d, s, content)
     return c.json({ status: 'done', content })
   } catch (err) {
     await db.releaseFeedback(c.env.DB, userId, d, s)

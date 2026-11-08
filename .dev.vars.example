@@ -1,3 +1,6 @@
 # ローカル開発用のシークレット。このファイルを .dev.vars にコピーして値を入れる（.dev.vars はコミットしない）
 CLERK_SECRET_KEY=sk_test_xxx
 ANTHROPIC_API_KEY=sk-ant-xxx
+# 体重などを暗号化する鍵（32バイトを base64 にしたもの）。作り方:
+# node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+DATA_KEY=

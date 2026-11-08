@@ -18,7 +18,7 @@
 |---|---|
 | フロント | React + Vite（PWA） |
 | API | Cloudflare Workers（Hono）。`/api/*` だけWorkerが処理し、それ以外は静的アセット |
-| DB | Cloudflare D1。全テーブルをClerkのユーザーIDで分離 |
+| DB | Cloudflare D1。全テーブルをClerkのユーザーIDで分離。体重・目標の体重・AIのひとことは暗号化（AES-GCM）して保存 |
 | 認証 | Clerk（フロントの `<SignIn />`、Workerでセッショントークンを検証） |
 | AI | Claude API（`claude-opus-5-5`） |
 | CI/CD | GitHub Actions：`main` にpushでテスト → ビルド → D1マイグレーション → デプロイ |
@@ -56,7 +56,17 @@ migrations/ D1のスキーマ
 |---|---|
 | `CLERK_SECRET_KEY` | Clerkの Secret key |
 | `ANTHROPIC_API_KEY` | AnthropicのAPIキー |
+| `DATA_KEY` | 体重などを暗号化する鍵（32バイトを base64 にしたもの）。下のコマンドで、だれの目にも触れずに作って登録できる |
 | `ALLOWED_USER_IDS`（任意） | 2人のClerkユーザーID（カンマ区切り）。設定するとそれ以外のユーザーはAPIを使えない |
+
+```bash
+node -e "process.stdout.write(require('crypto').randomBytes(32).toString('base64'))" | npx wrangler secret put DATA_KEY
+```
+
+- `DATA_KEY` がないとAPIはエラーになる（平文で保存しないため）。
+- **`DATA_KEY` を消したり変えたりすると、暗号化したデータは二度と読めなくなる。** シークレットは登録後に読み出せないので、作り直しはできない。
+- 暗号化を入れる前に保存された値は、そのユーザーがアプリを開いたときに暗号化し直される。
+- これは「DBの画面やSQLで中身が見えない」ための対策で、Workerのコードを書き換えられる人からは守れない。
 
 ## 開発
 

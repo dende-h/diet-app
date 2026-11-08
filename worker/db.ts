@@ -8,6 +8,10 @@ import type {
   UserData,
   WeightRecord,
 } from '../shared/calc'
+import { isEncrypted, type Cipher } from './crypto'
+
+// 体重に関わる値（体重、目標の開始体重・減量kg、AIのひとこと）は暗号化して保存する。
+// 読み書きはここで暗号化・復号するので、ほかの場所では平文のまま扱える。
 
 interface ProfileRow {
   sex: Sex
@@ -19,11 +23,19 @@ interface ProfileRow {
 interface GoalRow {
   start_date: string
   end_date: string
-  start_weight: number
-  loss_kg: number
+  /** 暗号文（暗号化を入れる前の行は数値） */
+  start_weight: string | number
+  loss_kg: string | number
 }
 
-export async function loadUserData(db: D1Database, userId: string): Promise<UserData> {
+interface WeightRow {
+  date: string
+  seq: number
+  time: string
+  weight: string | number
+}
+
+export async function loadUserData(db: D1Database, cipher: Cipher, userId: string): Promise<UserData> {
   const [profile, goal, weights, intakes, exercises] = await db.batch([
     db.prepare('SELECT sex, birth_year, height_cm, activity FROM profiles WHERE user_id = ?').bind(userId),
     db
@@ -40,9 +52,21 @@ export async function loadUserData(db: D1Database, userId: string): Promise<User
   return {
     profile: p ? { sex: p.sex, birthYear: p.birth_year, heightCm: p.height_cm, activity: p.activity } : null,
     goal: g
-      ? { startDate: g.start_date, endDate: g.end_date, startWeight: g.start_weight, lossKg: g.loss_kg }
+      ? {
+          startDate: g.start_date,
+          endDate: g.end_date,
+          startWeight: await cipher.decryptNumber(g.start_weight, 'goals.start_weight'),
+          lossKg: await cipher.decryptNumber(g.loss_kg, 'goals.loss_kg'),
+        }
       : null,
-    weights: weights.results as unknown as WeightRecord[],
+    weights: await Promise.all(
+      (weights.results as unknown as WeightRow[]).map(async (w) => ({
+        date: w.date,
+        seq: w.seq,
+        time: w.time,
+        weight: await cipher.decryptNumber(w.weight, 'weights.weight'),
+      })),
+    ),
     intakes: intakes.results as unknown as IntakeEntry[],
     exercises: exercises.results as unknown as ExerciseEntry[],
   }
@@ -59,10 +83,16 @@ export async function saveProfile(db: D1Database, userId: string, p: Profile) {
     .run()
 }
 
-export async function saveGoal(db: D1Database, userId: string, g: Goal) {
+export async function saveGoal(db: D1Database, cipher: Cipher, userId: string, g: Goal) {
   await db
     .prepare('INSERT INTO goals (user_id, start_date, end_date, start_weight, loss_kg) VALUES (?, ?, ?, ?, ?)')
-    .bind(userId, g.startDate, g.endDate, g.startWeight, g.lossKg)
+    .bind(
+      userId,
+      g.startDate,
+      g.endDate,
+      await cipher.encryptNumber(g.startWeight, 'goals.start_weight'),
+      await cipher.encryptNumber(g.lossKg, 'goals.loss_kg'),
+    )
     .run()
 }
 
@@ -72,19 +102,21 @@ export async function saveGoal(db: D1Database, userId: string, g: Goal) {
  */
 export async function insertWeight(
   db: D1Database,
+  cipher: Cipher,
   userId: string,
   r: { date: string; time: string; weight: number },
 ): Promise<WeightRecord | null> {
   try {
-    return await db
+    const row = await db
       .prepare(
         `INSERT INTO weights (user_id, date, seq, time, weight)
          SELECT ?1, ?2, COUNT(*) + 1, ?3, ?4 FROM weights WHERE user_id = ?1 AND date = ?2
          HAVING COUNT(*) < 2
-         RETURNING date, seq, time, weight`,
+         RETURNING date, seq, time`,
       )
-      .bind(userId, r.date, r.time, r.weight)
-      .first<WeightRecord>()
+      .bind(userId, r.date, r.time, await cipher.encryptNumber(r.weight, 'weights.weight'))
+      .first<Omit<WeightRecord, 'weight'>>()
+    return row ? { ...row, weight: r.weight } : null
   } catch (err) {
     if (err instanceof Error && /UNIQUE constraint failed/.test(err.message)) return null
     throw err
@@ -141,19 +173,29 @@ export async function deleteIntake(db: D1Database, userId: string, id: number) {
 
 // ---- AIフィードバック（体重の記録ごとに1件） ----
 
-export async function listFeedbacks(db: D1Database, userId: string, date: string): Promise<StoredFeedback[]> {
+async function decryptFeedback(cipher: Cipher, f: StoredFeedback): Promise<StoredFeedback> {
+  return { ...f, content: await cipher.decrypt(f.content, 'feedbacks.content') }
+}
+
+export async function listFeedbacks(
+  db: D1Database,
+  cipher: Cipher,
+  userId: string,
+  date: string,
+): Promise<StoredFeedback[]> {
   const { results } = await db
     .prepare('SELECT seq, status, content FROM feedbacks WHERE user_id = ? AND date = ?')
     .bind(userId, date)
     .all<StoredFeedback>()
-  return results
+  return Promise.all(results.map((f) => decryptFeedback(cipher, f)))
 }
 
-export async function getFeedback(db: D1Database, userId: string, date: string, seq: number) {
-  return db
+export async function getFeedback(db: D1Database, cipher: Cipher, userId: string, date: string, seq: number) {
+  const row = await db
     .prepare('SELECT seq, status, content FROM feedbacks WHERE user_id = ? AND date = ? AND seq = ?')
     .bind(userId, date, seq)
     .first<StoredFeedback>()
+  return row ? decryptFeedback(cipher, row) : null
 }
 
 /**
@@ -178,10 +220,17 @@ export async function claimFeedback(db: D1Database, userId: string, date: string
   return stale.meta.changes === 1
 }
 
-export async function completeFeedback(db: D1Database, userId: string, date: string, seq: number, content: string) {
+export async function completeFeedback(
+  db: D1Database,
+  cipher: Cipher,
+  userId: string,
+  date: string,
+  seq: number,
+  content: string,
+) {
   await db
     .prepare("UPDATE feedbacks SET content = ?, status = 'done' WHERE user_id = ? AND date = ? AND seq = ?")
-    .bind(content, userId, date, seq)
+    .bind(await cipher.encrypt(content, 'feedbacks.content'), userId, date, seq)
     .run()
 }
 
@@ -190,4 +239,51 @@ export async function releaseFeedback(db: D1Database, userId: string, date: stri
     .prepare("DELETE FROM feedbacks WHERE user_id = ? AND date = ? AND seq = ? AND status = 'pending'")
     .bind(userId, date, seq)
     .run()
+}
+
+// ---- 暗号化を入れる前に保存された値の暗号化 ----
+
+/**
+ * そのユーザーの、まだ平文のまま残っている体重・目標・ひとことを暗号化し直す。
+ * 鍵は Worker の中にしかないので、DBのマイグレーションではなくアプリを開いたときに行う。
+ * 一度暗号化すれば対象がなくなるので、2回目以降はSELECTだけで終わる。
+ */
+export async function encryptLegacyRows(db: D1Database, cipher: Cipher, userId: string) {
+  const [weights, goals, feedbacks] = await db.batch([
+    db.prepare("SELECT date, seq, weight FROM weights WHERE user_id = ? AND typeof(weight) != 'text'").bind(userId),
+    db
+      .prepare(
+        "SELECT id, start_weight, loss_kg FROM goals WHERE user_id = ? AND (typeof(start_weight) != 'text' OR typeof(loss_kg) != 'text')",
+      )
+      .bind(userId),
+    db
+      .prepare("SELECT date, seq, content FROM feedbacks WHERE user_id = ? AND status = 'done' AND content NOT LIKE 'v1:%'")
+      .bind(userId),
+  ])
+  const updates: D1PreparedStatement[] = []
+  for (const w of weights.results as { date: string; seq: number; weight: number }[]) {
+    updates.push(
+      db
+        .prepare('UPDATE weights SET weight = ? WHERE user_id = ? AND date = ? AND seq = ?')
+        .bind(await cipher.encryptNumber(w.weight, 'weights.weight'), userId, w.date, w.seq),
+    )
+  }
+  for (const g of goals.results as { id: number; start_weight: number | string; loss_kg: number | string }[]) {
+    const startWeight = isEncrypted(g.start_weight)
+      ? g.start_weight
+      : await cipher.encryptNumber(Number(g.start_weight), 'goals.start_weight')
+    const lossKg = isEncrypted(g.loss_kg) ? g.loss_kg : await cipher.encryptNumber(Number(g.loss_kg), 'goals.loss_kg')
+    updates.push(
+      db.prepare('UPDATE goals SET start_weight = ?, loss_kg = ? WHERE user_id = ? AND id = ?').bind(startWeight, lossKg, userId, g.id),
+    )
+  }
+  for (const f of feedbacks.results as { date: string; seq: number; content: string }[]) {
+    updates.push(
+      db
+        .prepare('UPDATE feedbacks SET content = ? WHERE user_id = ? AND date = ? AND seq = ?')
+        .bind(await cipher.encrypt(f.content, 'feedbacks.content'), userId, f.date, f.seq),
+    )
+  }
+  if (updates.length > 0) await db.batch(updates)
+  return updates.length
 }
