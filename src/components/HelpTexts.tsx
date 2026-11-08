@@ -2,6 +2,7 @@
 import {
   ACTIVITY_LEVELS,
   BORDER_RATIO,
+  DAILY_ESTIMATE_LIMIT,
   MAX_EXERCISE_LENGTH,
   MAX_WEIGHINS_PER_DAY,
   type CalorieTarget,
@@ -73,7 +74,7 @@ export function CalorieHelp({ target, activity }: { target: CalorieTarget; activ
       <ul>
         <li>食事の写真を選ぶと、AIが料理ごとのカロリーの目安を出し、合計をkcalの欄に入れます。</li>
         <li>写真から量を見積もるので誤差があります。違っていたら数字を直してから追加してください。</li>
-        <li>写真は保存されません。1日30回まで使えます。</li>
+        <li>写真は保存されません。1日{DAILY_ESTIMATE_LIMIT}回まで使えて、それ以上は手入力で記録します。</li>
       </ul>
     </>
   )

@@ -102,6 +102,16 @@ export interface CalorieEstimate {
   items: { name: string; kcal: number }[]
 }
 
+/** 写真からのカロリー推定は1人1日この回数まで。それ以上は手入力 */
+export const DAILY_ESTIMATE_LIMIT = 10
+
+/** 写真からのカロリー推定の、その日の残り回数（GET /api/estimates/:date） */
+export interface EstimateUsage {
+  used: number
+  limit: number
+  remaining: number
+}
+
 export const ACTIVITY_LEVELS = [
   { value: 1.2, label: 'ほぼ座りっぱなし（デスクワーク中心）' },
   { value: 1.375, label: '軽い運動（週1〜3回）' },

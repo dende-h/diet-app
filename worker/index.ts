@@ -4,6 +4,7 @@ import {
   ACTIVITY_LEVELS,
   addDays,
   isValidDate,
+  DAILY_ESTIMATE_LIMIT,
   isValidTime,
   MAX_EXERCISE_LENGTH,
   MAX_WEIGHINS_PER_DAY,
@@ -151,27 +152,45 @@ app.post('/intakes', async (c) => {
 
 // 写真から食事のカロリーを見積もる（数字だけ。写真は保存しない）
 const ESTIMATE_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const
-/** 不具合で呼び出しが止まらなくなっても費用がふくらまないよう、1人1日の回数に上限を置く */
-const DAILY_ESTIMATE_LIMIT = 30
+
+/**
+ * 回数を数える日付。利用者の「1日」で区切るため端末の今日を使うが、
+ * ずらして回数を増やせないよう、サーバー時刻の前後1日に限る。
+ */
+function estimateDay(value: unknown): string {
+  const d = date(value)
+  const today = serverToday()
+  if (d < addDays(today, -1) || d > addDays(today, 1)) throw new BadRequest('date is out of range')
+  return d
+}
+
+// 写真判定の、その日の残り回数
+app.get('/estimates/:date', async (c) => {
+  const used = await db.getEstimateCount(c.env.DB, c.get('userId'), date(c.req.param('date')))
+  return c.json({ used, limit: DAILY_ESTIMATE_LIMIT, remaining: Math.max(DAILY_ESTIMATE_LIMIT - used, 0) })
+})
 
 app.post('/estimate', async (c) => {
   const body = await c.req.json<Record<string, unknown>>()
+  const day = estimateDay(body.date)
   const mediaType = ESTIMATE_TYPES.find((t) => t === body.mediaType)
   if (!mediaType) throw new BadRequest('mediaType must be image/jpeg, image/png or image/webp')
   if (typeof body.image !== 'string' || body.image.length === 0 || body.image.length > 4_000_000) {
     throw new BadRequest('image must be base64 (up to about 3MB)')
   }
-  const used = await db.countEstimate(c.env.DB, c.get('userId'), serverToday())
+  // 費用を抑えるため1人1日の回数に上限を置く（失敗した回も数える）
+  const used = await db.countEstimate(c.env.DB, c.get('userId'), day)
+  const remaining = Math.max(DAILY_ESTIMATE_LIMIT - used, 0)
   if (used > DAILY_ESTIMATE_LIMIT) {
-    return c.json({ error: `写真からの計算は1日${DAILY_ESTIMATE_LIMIT}回までです` }, 429)
+    return c.json({ error: `写真からの計算は1日${DAILY_ESTIMATE_LIMIT}回までです。手入力で記録してください`, remaining }, 429)
   }
   try {
     const estimate = await estimateCalories(c.env.ANTHROPIC_API_KEY, body.image, mediaType)
-    if (estimate.items.length === 0) return c.json({ error: '食べ物が写っていないようです' }, 422)
-    return c.json(estimate)
+    if (estimate.items.length === 0) return c.json({ error: '食べ物が写っていないようです', remaining }, 422)
+    return c.json({ ...estimate, remaining })
   } catch (err) {
     console.error('calorie estimate failed', err)
-    return c.json({ error: 'カロリーを計算できませんでした' }, 502)
+    return c.json({ error: 'カロリーを計算できませんでした', remaining }, 502)
   }
 })
 

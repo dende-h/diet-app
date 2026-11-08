@@ -12,7 +12,8 @@ import {
   type WeightRecord,
 } from '../shared/calc'
 
-const MODEL = 'claude-opus-5-5'
+// 1日2回・150〜250字の励ましなので、Opus の半額の Sonnet で十分
+const MODEL = 'claude-sonnet-5-5'
 
 const SYSTEM = `あなたは減量に取り組む人に寄り添うパーソナルコーチです。
 ユーザーは体重を時刻つきで1日2回まで記録します。記録するたびに、あなたからのフィードバックを1つ受け取ります（1日最大2回）。

@@ -155,6 +155,14 @@ export async function saveExercise(db: D1Database, userId: string, date: string,
     .run()
 }
 
+export async function getEstimateCount(db: D1Database, userId: string, date: string): Promise<number> {
+  const row = await db
+    .prepare('SELECT count FROM estimate_usage WHERE user_id = ? AND date = ?')
+    .bind(userId, date)
+    .first<{ count: number }>()
+  return row?.count ?? 0
+}
+
 /** 写真からのカロリー推定の回数を1増やし、その日の合計を返す */
 export async function countEstimate(db: D1Database, userId: string, date: string): Promise<number> {
   const row = await db

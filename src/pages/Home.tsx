@@ -1,10 +1,12 @@
-import { useRef, useState, type ChangeEvent, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import {
   addDays,
   calorieTarget,
   computePlan,
+  DAILY_ESTIMATE_LIMIT,
   intakeTotal,
   localTime,
+  localToday,
   MAX_EXERCISE_LENGTH,
   MAX_WEIGHINS_PER_DAY,
   compareRecords,
@@ -12,6 +14,7 @@ import {
   weightAsOf,
   type CalorieEstimate,
   type CalorieTarget,
+  type EstimateUsage,
   type Plan,
   type WeightRecord,
 } from '../../shared/calc'
@@ -133,9 +136,34 @@ function CalorieCard({
   const [label, setLabel] = useState('')
   const [busy, setBusy] = useState(false)
   const [photo, setPhoto] = useState<PhotoState>({ status: 'idle' })
+  /** 写真判定の今日の残り回数（読み込み前は null） */
+  const [photoLeft, setPhotoLeft] = useState<number | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
   const remaining = border - total
   const over = remaining < 0
+
+  const refreshPhotoLeft = useCallback(async () => {
+    try {
+      const usage = await api<EstimateUsage>(`/estimates/${localToday()}`)
+      setPhotoLeft(usage.remaining)
+    } catch {
+      // 残り回数が分からなくても、写真判定はサーバー側で上限を確かめる
+    }
+  }, [api])
+
+  useEffect(() => {
+    let cancelled = false
+    api<EstimateUsage>(`/estimates/${localToday()}`)
+      .then((usage) => {
+        if (!cancelled) setPhotoLeft(usage.remaining)
+      })
+      .catch(() => {
+        // 残り回数が分からなくても、写真判定はサーバー側で上限を確かめる
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [api])
 
   const onPhoto = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -146,16 +174,19 @@ function CalorieCard({
     setPhoto({ status: 'loading' })
     try {
       const image = await photoToJpeg(file)
-      const estimate = await api<CalorieEstimate>('/estimate', {
+      const estimate = await api<CalorieEstimate & { remaining: number }>('/estimate', {
         method: 'POST',
-        body: { image: image.data, mediaType: image.mediaType },
+        // 回数は利用者の「今日」で数える（記録する日付とは別）
+        body: { image: image.data, mediaType: image.mediaType, date: localToday() },
       })
       setKcal(String(estimate.kcal))
       setLabel(estimate.label)
       setPhoto({ status: 'done', estimate })
+      setPhotoLeft(estimate.remaining)
     } catch (err) {
       const known = err instanceof ApiError && [422, 429, 502].includes(err.status)
       setPhoto({ status: 'error', message: known ? (err as ApiError).message : 'カロリーを計算できませんでした' })
+      void refreshPhotoLeft()
     }
   }
 
@@ -232,7 +263,7 @@ function CalorieCard({
           type="button"
           className="button secondary wide photo-button"
           onClick={() => fileRef.current?.click()}
-          disabled={photo.status === 'loading'}
+          disabled={photo.status === 'loading' || photoLeft === 0}
         >
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M4 8h3l2-3h6l2 3h3v11H4z" />
@@ -240,6 +271,13 @@ function CalorieCard({
           </svg>
           写真からカロリーを計算
         </button>
+        {photoLeft === 0 ? (
+          <p className="muted small">
+            今日の写真の判定は上限（{DAILY_ESTIMATE_LIMIT}回）に達しました。時刻とkcalを手入力してください。
+          </p>
+        ) : (
+          photoLeft !== null && <p className="muted small photo-left">写真の判定は今日あと{photoLeft}回</p>
+        )}
         {photo.status === 'loading' && <p className="muted small">AIがカロリーを計算しています…</p>}
         {photo.status === 'done' && (
           <p className="estimate small">
