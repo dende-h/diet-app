@@ -31,7 +31,7 @@ migrations/ D1のスキーマ
 ### 1. Clerk
 
 1. Clerkでアプリを作る（サインイン方法はメールアドレス＋パスワード、またはメールコード）。
-2. ダッシュボードの **Access mode** ページで Allowlist を有効にし、自分と妻のメールアドレスだけを登録する（他の人がサインアップできないようにする）。開発インスタンスなら無料で使える。
+2. 2人がアプリでサインアップしたら、ダッシュボードの **Access mode** を Invite-only（Restricted）にして、それ以上だれも登録できないようにする（Allowlistは有料プランのみ）。あわせてWorkerの `ALLOWED_USER_IDS` に2人のユーザーIDを登録しておくと、ほかのアカウントではAPIを使えない。
 3. **API keys** で Publishable key（`pk_...`）と Secret key（`sk_...`）を控える。
 
 ### 2. GitHub
