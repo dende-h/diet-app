@@ -12,8 +12,12 @@ const data: UserData = {
     { date: '2026-10-30', slot: 'morning', weight: 60.2 },
   ],
   intakes: [
-    { id: 1, date: '2026-10-29', kcal: 900, label: '夕食' },
-    { id: 2, date: '2026-10-29', kcal: 550, label: '昼食' },
+    { id: 1, date: '2026-10-29', time: '19:30', kcal: 900, label: '夕食' },
+    { id: 2, date: '2026-10-29', time: '', kcal: 550, label: '昼食' },
+  ],
+  exercises: [
+    { date: '2026-10-20', text: 'old' },
+    { date: '2026-10-29', text: 'walk 30min' },
   ],
 }
 
@@ -38,6 +42,15 @@ describe('buildReport', () => {
     expect(report).toMatch(/10\/29（昨日）: 1,450kcal（ボーダー比 [+-]\d+）/)
     expect(report).toContain('10/28: 記録なし')
     expect(report).toContain('今日ここまで: 記録なし')
+  })
+
+  it('lists yesterday meals with their times', () => {
+    expect(report).toContain('昨日の食事:\n時刻不明 昼食 550kcal\n19:30 夕食 900kcal')
+  })
+
+  it('includes recent exercise notes only', () => {
+    expect(report).toContain('10/29: walk 30min')
+    expect(report).not.toContain('old')
   })
 
   it('reports an evening weigh-in', () => {

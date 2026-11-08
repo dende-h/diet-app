@@ -23,6 +23,8 @@ const SYSTEM = `あなたは減量に取り組む人に寄り添うパーソナ�
 - 朝の記録へのフィードバック: 今朝の体重と数日〜1週間の流れ、今週の目標への進み具合、前日の摂取カロリーの振り返り、今日の食事で意識すると良い具体的な行動を1つ。
 - 夜の記録へのフィードバック: 今日ここまでの摂取カロリーとボーダーの差、朝からの体重の変化、明日の朝に向けてできる具体的な行動を1つ。夜の体重は食事や水分で朝より重くなるのが普通なので、朝との差を失敗のように扱わない。
 - 体重は日々の水分などで上下するので、1回の増減より数日〜1週間の流れを見る。
+- 運動の記録（自由記述）があれば、内容に具体的に触れる。運動の消費カロリーは計算せず、摂取ボーダーを運動の分だけ増やすような助言もしない。
+- 食事の時刻が分かるときは、遅い時間の食事や間隔なども必要に応じて考慮する。
 - 責めたり不安をあおったりしない。うまくいった点は具体的に褒める。
 - 記録がない日は、記録すると振り返りやすくなる、と軽く促す程度にする。
 - 極端な食事制限や無理なペースは勧めない。体調不良や医療的な判断が必要そうなら医師への相談を勧める。`
@@ -115,6 +117,21 @@ export function buildReport(data: UserData, today: string, slot: WeightSlot): st
       ? `今日ここまで: ${kcal(todayTotal)}（ボーダー比 ${signed(todayTotal - target.border, 0)}）`
       : '今日ここまで: 記録なし',
   )
+
+  for (const [label, d] of [
+    ['昨日', addDays(today, -1)],
+    ['今日', today],
+  ] as const) {
+    const meals = intakes.filter((i) => i.date === d).sort((a, b) => a.time.localeCompare(b.time) || a.id - b.id)
+    if (meals.length === 0) continue
+    lines.push('', `${label}の食事:`)
+    for (const m of meals) lines.push(`${m.time || '時刻不明'} ${m.label || '食事'} ${kcal(m.kcal)}`)
+  }
+
+  lines.push('', '直近7日の運動（本人の自由記述。記録がある日だけ）:')
+  const recentExercises = (data.exercises ?? []).filter((e) => e.date >= addDays(today, -6) && e.date <= today)
+  if (recentExercises.length === 0) lines.push('記録なし')
+  for (const e of recentExercises) lines.push(`${e.date === today ? `${md(e.date)}（今日）` : md(e.date)}: ${e.text}`)
 
   return lines.join('\n')
 }

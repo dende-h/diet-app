@@ -1,18 +1,23 @@
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type ChangeEvent, type FormEvent } from 'react'
 import {
   addDays,
   calorieTarget,
   computePlan,
   intakeTotal,
+  localTime,
+  MAX_EXERCISE_LENGTH,
   slotLabel,
   toDayNum,
   WEIGHT_SLOTS,
   weightAsOf,
+  type CalorieEstimate,
   type Plan,
   type WeightRecord,
   type WeightSlot,
 } from '../../shared/calc'
+import { ApiError, useApi } from '../api'
 import { formatDate, formatKcal, useSlotFeedbacks, type SlotFeedback } from '../lib'
+import { photoToJpeg } from '../photo'
 import { AlreadyRecorded, useStore } from '../store'
 
 interface Props {
@@ -54,7 +59,14 @@ export function Home({ date, setDate, today }: Props) {
         <FeedbackCard key={slot} slot={slot} feedback={feedbacks.get(slot)} onRetry={() => feedbacks.retry(slot)} />
       ))}
 
-      <CalorieCard date={date} border={target.border} maintenance={target.maintenance} total={intakeTotal(intakes, date)} />
+      <CalorieCard
+        key={`calorie-${date}`}
+        date={date}
+        border={target.border}
+        maintenance={target.maintenance}
+        total={intakeTotal(intakes, date)}
+      />
+      <ExerciseCard key={`exercise-${date}`} date={date} today={today} />
       <WeekCard plan={plan} weight={weightAsOf(daily, today, goal!.startWeight)} />
     </>
   )
@@ -87,33 +99,62 @@ function FeedbackCard({
   )
 }
 
-const MEAL_LABELS = ['朝食', '昼食', '夕食', '間食']
-
-function defaultLabel(): string {
-  const h = new Date().getHours()
-  if (h < 10) return '朝食'
-  if (h < 15) return '昼食'
-  if (h < 17) return '間食'
-  return '夕食'
-}
+type PhotoState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'done'; estimate: CalorieEstimate }
+  | { status: 'error'; message: string }
 
 function CalorieCard({ date, border, maintenance, total }: { date: string; border: number; maintenance: number; total: number }) {
   const { data, addIntake, deleteIntake } = useStore()
-  const entries = data!.intakes.filter((i) => i.date === date)
-  const [label, setLabel] = useState(defaultLabel)
+  const api = useApi()
+  const entries = data!.intakes
+    .filter((i) => i.date === date)
+    .sort((a, b) => a.time.localeCompare(b.time) || a.id - b.id)
+  const [time, setTime] = useState(localTime)
+  const [timeEdited, setTimeEdited] = useState(false)
   const [kcal, setKcal] = useState('')
+  const [label, setLabel] = useState('')
   const [busy, setBusy] = useState(false)
+  const [photo, setPhoto] = useState<PhotoState>({ status: 'idle' })
+  const fileRef = useRef<HTMLInputElement>(null)
   const remaining = border - total
   const over = remaining < 0
 
+  const onPhoto = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    // 同じ写真を選び直せるように空にしておく
+    e.target.value = ''
+    if (!file) return
+    if (!timeEdited) setTime(localTime())
+    setPhoto({ status: 'loading' })
+    try {
+      const image = await photoToJpeg(file)
+      const estimate = await api<CalorieEstimate>('/estimate', {
+        method: 'POST',
+        body: { image: image.data, mediaType: image.mediaType },
+      })
+      setKcal(String(estimate.kcal))
+      setLabel(estimate.label)
+      setPhoto({ status: 'done', estimate })
+    } catch (err) {
+      const known = err instanceof ApiError && [422, 429, 502].includes(err.status)
+      setPhoto({ status: 'error', message: known ? (err as ApiError).message : 'カロリーを計算できませんでした' })
+    }
+  }
+
   const submit = async (e: FormEvent) => {
     e.preventDefault()
-    const value = Number(kcal)
-    if (!Number.isFinite(value) || value <= 0) return
+    const value = Math.round(Number(kcal))
+    if (!Number.isFinite(value) || value <= 0 || !time) return
     setBusy(true)
     try {
-      await addIntake(date, value, label)
+      await addIntake({ date, time, kcal: value, label })
       setKcal('')
+      setLabel('')
+      setTime(localTime())
+      setTimeEdited(false)
+      setPhoto({ status: 'idle' })
     } catch {
       alert('保存できませんでした')
     } finally {
@@ -148,13 +189,14 @@ function CalorieCard({ date, border, maintenance, total }: { date: string; borde
         <ul className="entries">
           {entries.map((i) => (
             <li key={i.id}>
-              <span>{i.label || '食事'}</span>
+              <span className="num muted">{i.time || '—'}</span>
+              <span className="entry-label">{i.label || '食事'}</span>
               <span className="num">{formatKcal(i.kcal)} kcal</span>
               <button
                 className="icon-button small"
-                aria-label={`${i.label} ${i.kcal}kcal を削除`}
+                aria-label={`${i.time} ${i.label || '食事'} ${i.kcal}kcal を削除`}
                 onClick={() => {
-                  if (confirm(`${i.label || '食事'} ${i.kcal} kcal を削除しますか？`)) void deleteIntake(i.id)
+                  if (confirm(`${i.time} ${i.label || '食事'} ${i.kcal} kcal を削除しますか？`)) void deleteIntake(i.id)
                 }}
               >
                 ×
@@ -165,14 +207,40 @@ function CalorieCard({ date, border, maintenance, total }: { date: string; borde
       )}
 
       <form className="intake-form" onSubmit={submit}>
-        <div className="chips">
-          {MEAL_LABELS.map((l) => (
-            <button type="button" key={l} className={l === label ? 'chip active' : 'chip'} onClick={() => setLabel(l)}>
-              {l}
-            </button>
-          ))}
-        </div>
+        <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => void onPhoto(e)} />
+        <button
+          type="button"
+          className="button secondary wide photo-button"
+          onClick={() => fileRef.current?.click()}
+          disabled={photo.status === 'loading'}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M4 8h3l2-3h6l2 3h3v11H4z" />
+            <circle cx="12" cy="13" r="3.5" />
+          </svg>
+          写真からカロリーを計算
+        </button>
+        {photo.status === 'loading' && <p className="muted small">AIがカロリーを計算しています…</p>}
+        {photo.status === 'done' && (
+          <p className="estimate small">
+            {photo.estimate.items.map((item) => `${item.name} ${formatKcal(item.kcal)}`).join(' / ')} kcal
+            <br />
+            <span className="muted">AIの目安です。違っていたら数字を直してから追加してください。</span>
+          </p>
+        )}
+        {photo.status === 'error' && <p className="warning small">{photo.message}</p>}
         <div className="input-row">
+          <input
+            className="time-input"
+            type="time"
+            value={time}
+            onChange={(e) => {
+              setTime(e.target.value)
+              setTimeEdited(true)
+            }}
+            aria-label="食べた時刻"
+            required
+          />
           <input
             type="number"
             inputMode="numeric"
@@ -183,12 +251,56 @@ function CalorieCard({ date, border, maintenance, total }: { date: string; borde
             onChange={(e) => setKcal(e.target.value)}
             aria-label="摂取カロリー"
           />
-          <button className="button" disabled={busy || !kcal}>
+          <button className="button" disabled={busy || !kcal || !time}>
             追加
           </button>
         </div>
       </form>
     </section>
+  )
+}
+
+function ExerciseCard({ date, today }: { date: string; today: string }) {
+  const { data, saveExercise } = useStore()
+  const saved = data!.exercises.find((e) => e.date === date)?.text ?? ''
+  const [text, setText] = useState(saved)
+  const [busy, setBusy] = useState(false)
+  const dirty = text.trim() !== saved
+
+  const submit = async (e: FormEvent) => {
+    e.preventDefault()
+    setBusy(true)
+    try {
+      await saveExercise(date, text.trim())
+      setText(text.trim())
+    } catch {
+      alert('保存できませんでした')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form className="card form" onSubmit={submit}>
+      <div className="card-title">{date === today ? '今日の運動' : 'この日の運動'}</div>
+      <textarea
+        rows={2}
+        maxLength={MAX_EXERCISE_LENGTH}
+        placeholder="例: 30分ウォーキング、階段を使った"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        aria-label="運動の内容"
+      />
+      <div className="form-actions">
+        <button className="button" disabled={busy || !dirty}>
+          保存
+        </button>
+        {!dirty && saved && <span className="muted small">保存済み</span>}
+      </div>
+      <p className="muted small">
+        AIのひとことの参考にします（消費カロリーは計算しません）。夜の体重を記録する前に書いておくと、夜のひとことに反映されます。
+      </p>
+    </form>
   )
 }
 

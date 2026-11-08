@@ -4,12 +4,15 @@ import {
   ACTIVITY_LEVELS,
   addDays,
   isValidDate,
+  isValidTime,
   isWeightSlot,
+  MAX_EXERCISE_LENGTH,
   type Goal,
   type Profile,
   type WeightSlot,
 } from '../shared/calc'
 import * as db from './db'
+import { estimateCalories } from './estimate'
 import { generateFeedback } from './feedback'
 
 type Bindings = {
@@ -124,10 +127,51 @@ app.post('/weights/:date/:slot', async (c) => {
 
 app.post('/intakes', async (c) => {
   const body = await c.req.json<Record<string, unknown>>()
-  const d = date(body.date)
-  const kcal = Math.round(num(body.kcal, 1, 10000, 'kcal'))
-  const label = typeof body.label === 'string' ? body.label.slice(0, 40) : ''
-  return c.json(await db.addIntake(c.env.DB, c.get('userId'), d, kcal, label))
+  const time = body.time ?? ''
+  if (time !== '' && !isValidTime(time)) throw new BadRequest('time must be HH:MM')
+  const entry = {
+    date: date(body.date),
+    time: time as string,
+    kcal: Math.round(num(body.kcal, 1, 10000, 'kcal')),
+    label: typeof body.label === 'string' ? body.label.trim().slice(0, 40) : '',
+  }
+  return c.json(await db.addIntake(c.env.DB, c.get('userId'), entry))
+})
+
+// 写真から食事のカロリーを見積もる（数字だけ。写真は保存しない）
+const ESTIMATE_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const
+/** 不具合で呼び出しが止まらなくなっても費用がふくらまないよう、1人1日の回数に上限を置く */
+const DAILY_ESTIMATE_LIMIT = 30
+
+app.post('/estimate', async (c) => {
+  const body = await c.req.json<Record<string, unknown>>()
+  const mediaType = ESTIMATE_TYPES.find((t) => t === body.mediaType)
+  if (!mediaType) throw new BadRequest('mediaType must be image/jpeg, image/png or image/webp')
+  if (typeof body.image !== 'string' || body.image.length === 0 || body.image.length > 4_000_000) {
+    throw new BadRequest('image must be base64 (up to about 3MB)')
+  }
+  const used = await db.countEstimate(c.env.DB, c.get('userId'), serverToday())
+  if (used > DAILY_ESTIMATE_LIMIT) {
+    return c.json({ error: `写真からの計算は1日${DAILY_ESTIMATE_LIMIT}回までです` }, 429)
+  }
+  try {
+    const estimate = await estimateCalories(c.env.ANTHROPIC_API_KEY, body.image, mediaType)
+    if (estimate.items.length === 0) return c.json({ error: '食べ物が写っていないようです' }, 422)
+    return c.json(estimate)
+  } catch (err) {
+    console.error('calorie estimate failed', err)
+    return c.json({ error: 'カロリーを計算できませんでした' }, 502)
+  }
+})
+
+// その日の運動（自由記述）。空にすると削除
+app.put('/exercises/:date', async (c) => {
+  const d = date(c.req.param('date'))
+  const body = await c.req.json<Record<string, unknown>>()
+  if (typeof body.text !== 'string') throw new BadRequest('text must be a string')
+  const text = body.text.trim().slice(0, MAX_EXERCISE_LENGTH)
+  await db.saveExercise(c.env.DB, c.get('userId'), d, text)
+  return c.json({ date: d, text })
 })
 
 app.delete('/intakes/:id', async (c) => {

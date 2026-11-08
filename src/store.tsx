@@ -1,6 +1,7 @@
 import { createContext, use, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import {
   dailyWeights,
+  type ExerciseEntry,
   type Goal,
   type IntakeEntry,
   type Profile,
@@ -21,8 +22,10 @@ interface Store {
   saveGoal: (goal: Goal) => Promise<void>
   /** 記録済みの枠には記録できない（AlreadyRecorded を投げる） */
   recordWeight: (date: string, slot: WeightSlot, weight: number) => Promise<void>
-  addIntake: (date: string, kcal: number, label: string) => Promise<void>
+  addIntake: (entry: Omit<IntakeEntry, 'id'>) => Promise<void>
   deleteIntake: (id: number) => Promise<void>
+  /** 空の文字列で削除 */
+  saveExercise: (date: string, text: string) => Promise<void>
 }
 
 const StoreContext = createContext<Store | null>(null)
@@ -85,13 +88,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
           throw e
         }
       },
-      async addIntake(date, kcal, label) {
-        const saved = await api<IntakeEntry>('/intakes', { method: 'POST', body: { date, kcal, label } })
+      async addIntake(entry) {
+        const saved = await api<IntakeEntry>('/intakes', { method: 'POST', body: entry })
         update((d) => ({ ...d, intakes: [...d.intakes, saved] }))
       },
       async deleteIntake(id) {
         await api(`/intakes/${id}`, { method: 'DELETE' })
         update((d) => ({ ...d, intakes: d.intakes.filter((i) => i.id !== id) }))
+      },
+      async saveExercise(date, text) {
+        const saved = await api<ExerciseEntry>(`/exercises/${date}`, { method: 'PUT', body: { text } })
+        update((d) => ({
+          ...d,
+          exercises: [...d.exercises.filter((e) => e.date !== date), ...(saved.text ? [saved] : [])],
+        }))
       },
     }),
     [api, data, daily, error, reload],

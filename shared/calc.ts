@@ -69,8 +69,28 @@ export interface StoredFeedback {
 export interface IntakeEntry {
   id: number
   date: string
+  /** 'HH:MM'。時刻を記録する前のデータは '' */
+  time: string
   kcal: number
+  /** 写真から推定した料理名などのメモ（なければ ''） */
   label: string
+}
+
+/** その日の運動（自由記述）。AIフィードバックの材料にするだけで、消費カロリーは計算しない */
+export interface ExerciseEntry {
+  date: string
+  text: string
+}
+
+export const MAX_EXERCISE_LENGTH = 200
+
+export function isValidTime(value: unknown): value is string {
+  return typeof value === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(value)
+}
+
+/** 端末の現在時刻 'HH:MM' */
+export function localTime(now = new Date()): string {
+  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
 }
 
 /** GET /api/data のレスポンス */
@@ -79,6 +99,15 @@ export interface UserData {
   goal: Goal | null
   weights: WeightRecord[]
   intakes: IntakeEntry[]
+  exercises: ExerciseEntry[]
+}
+
+/** 写真からのカロリー推定（POST /api/estimate）の結果 */
+export interface CalorieEstimate {
+  kcal: number
+  /** 料理名をつないだもの（記録のメモに使う） */
+  label: string
+  items: { name: string; kcal: number }[]
 }
 
 export const ACTIVITY_LEVELS = [

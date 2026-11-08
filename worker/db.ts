@@ -1,4 +1,14 @@
-import type { Goal, IntakeEntry, Profile, Sex, StoredFeedback, UserData, WeightRecord, WeightSlot } from '../shared/calc'
+import type {
+  ExerciseEntry,
+  Goal,
+  IntakeEntry,
+  Profile,
+  Sex,
+  StoredFeedback,
+  UserData,
+  WeightRecord,
+  WeightSlot,
+} from '../shared/calc'
 
 interface ProfileRow {
   sex: Sex
@@ -15,13 +25,16 @@ interface GoalRow {
 }
 
 export async function loadUserData(db: D1Database, userId: string): Promise<UserData> {
-  const [profile, goal, weights, intakes] = await db.batch([
+  const [profile, goal, weights, intakes, exercises] = await db.batch([
     db.prepare('SELECT sex, birth_year, height_cm, activity FROM profiles WHERE user_id = ?').bind(userId),
     db
       .prepare('SELECT start_date, end_date, start_weight, loss_kg FROM goals WHERE user_id = ? ORDER BY id DESC LIMIT 1')
       .bind(userId),
     db.prepare('SELECT date, slot, weight FROM weights WHERE user_id = ? ORDER BY date, slot DESC').bind(userId),
-    db.prepare('SELECT id, date, kcal, label FROM intakes WHERE user_id = ? ORDER BY date, id').bind(userId),
+    db
+      .prepare('SELECT id, date, time, kcal, label FROM intakes WHERE user_id = ? ORDER BY date, time, id')
+      .bind(userId),
+    db.prepare('SELECT date, text FROM exercises WHERE user_id = ? ORDER BY date').bind(userId),
   ])
   const p = (profile.results as ProfileRow[])[0]
   const g = (goal.results as GoalRow[])[0]
@@ -32,6 +45,7 @@ export async function loadUserData(db: D1Database, userId: string): Promise<User
       : null,
     weights: weights.results as unknown as WeightRecord[],
     intakes: intakes.results as unknown as IntakeEntry[],
+    exercises: exercises.results as unknown as ExerciseEntry[],
   }
 }
 
@@ -72,11 +86,40 @@ export async function hasWeight(db: D1Database, userId: string, date: string, sl
   return row !== null
 }
 
-export async function addIntake(db: D1Database, userId: string, date: string, kcal: number, label: string) {
+export async function addIntake(db: D1Database, userId: string, entry: Omit<IntakeEntry, 'id'>) {
   return db
-    .prepare('INSERT INTO intakes (user_id, date, kcal, label) VALUES (?, ?, ?, ?) RETURNING id, date, kcal, label')
-    .bind(userId, date, kcal, label)
+    .prepare(
+      'INSERT INTO intakes (user_id, date, time, kcal, label) VALUES (?, ?, ?, ?, ?) RETURNING id, date, time, kcal, label',
+    )
+    .bind(userId, entry.date, entry.time, entry.kcal, entry.label)
     .first<IntakeEntry>()
+}
+
+/** その日の運動を保存する。空なら削除する */
+export async function saveExercise(db: D1Database, userId: string, date: string, text: string) {
+  if (!text) {
+    await db.prepare('DELETE FROM exercises WHERE user_id = ? AND date = ?').bind(userId, date).run()
+    return
+  }
+  await db
+    .prepare(
+      `INSERT INTO exercises (user_id, date, text) VALUES (?, ?, ?)
+       ON CONFLICT (user_id, date) DO UPDATE SET text = excluded.text, updated_at = datetime('now')`,
+    )
+    .bind(userId, date, text)
+    .run()
+}
+
+/** 写真からのカロリー推定の回数を1増やし、その日の合計を返す */
+export async function countEstimate(db: D1Database, userId: string, date: string): Promise<number> {
+  const row = await db
+    .prepare(
+      `INSERT INTO estimate_usage (user_id, date, count) VALUES (?, ?, 1)
+       ON CONFLICT (user_id, date) DO UPDATE SET count = count + 1 RETURNING count`,
+    )
+    .bind(userId, date)
+    .first<{ count: number }>()
+  return row?.count ?? 1
 }
 
 export async function deleteIntake(db: D1Database, userId: string, id: number) {
