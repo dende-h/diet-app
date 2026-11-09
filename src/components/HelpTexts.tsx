@@ -67,6 +67,7 @@ export function CalorieHelp({ target, activity }: { target: CalorieTarget; activ
       <h3>記録のしかた</h3>
       <ul>
         <li>食べた時刻とkcalを入れて「追加」を押します。時刻には今の時刻が入っていて、手で直せます。</li>
+        <li>内容（何をどれくらい食べたか）も書いておくと、AIのひとことで食事の中身にも触れてくれます。</li>
         <li>まちがえたときは、一覧の「×」で削除できます。</li>
       </ul>
 
@@ -74,6 +75,9 @@ export function CalorieHelp({ target, activity }: { target: CalorieTarget; activ
       <ul>
         <li>
           「カメラで撮る」でその場で撮るか、「写真を選ぶ」で撮っておいた写真を選ぶと、AIが料理ごとのカロリーの目安を出し、合計をkcalの欄に入れます。
+        </li>
+        <li>
+          撮る前に内容の欄に「ご飯少なめ」「半分残した」などと書いておくと、AIがそれも参考にして計算します。内容の欄には、AIが見分けた料理名が入ります（書いておいた補足は後ろに残ります）。
         </li>
         <li>写真から量を見積もるので誤差があります。違っていたら数字を直してから追加してください。</li>
         <li>写真は保存されません。1日{DAILY_ESTIMATE_LIMIT}回まで使えて、それ以上は手入力で記録します。</li>

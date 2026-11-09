@@ -64,8 +64,21 @@ export interface IntakeEntry {
   /** 'HH:MM'。時刻を記録する前のデータは '' */
   time: string
   kcal: number
-  /** 写真から推定した料理名などのメモ（なければ ''） */
+  /** 食事の内容。本人が書いたもの、なければ写真から推定した料理名（どちらもなければ ''） */
   label: string
+}
+
+/** 食事の内容の最大文字数（写真の補足にも使う） */
+export const MAX_MEAL_LABEL_LENGTH = 60
+
+/**
+ * 写真判定のあとに内容の欄に入れる文。補足だけ（「ご飯少なめ」など）だと何を食べたか残らないので、
+ * 補足に料理名が入っていなければ、AIが見分けた料理名を前につける
+ */
+export function mealLabel(estimate: CalorieEstimate, note: string): string {
+  if (!note) return estimate.label
+  if (estimate.items.every((i) => note.includes(i.name))) return note
+  return `${estimate.label}（${note}）`.slice(0, MAX_MEAL_LABEL_LENGTH)
 }
 
 /** その日の運動（自由記述）。AIフィードバックの材料にするだけで、消費カロリーは計算しない */

@@ -7,6 +7,7 @@ import {
   DAILY_ESTIMATE_LIMIT,
   isValidTime,
   MAX_EXERCISE_LENGTH,
+  MAX_MEAL_LABEL_LENGTH,
   MAX_WEIGHINS_PER_DAY,
   type Goal,
   type Profile,
@@ -51,6 +52,11 @@ function seq(value: unknown): number {
     throw new BadRequest(`seq must be 1 to ${MAX_WEIGHINS_PER_DAY}`)
   }
   return n
+}
+
+/** 食事の内容・写真の補足。文字列でなければ空 */
+function mealText(value: unknown): string {
+  return typeof value === 'string' ? value.trim().slice(0, MAX_MEAL_LABEL_LENGTH) : ''
 }
 
 /** サーバー時刻（UTC）の今日。端末の日付とはタイムゾーンでずれるので、前後1日の幅で比べる */
@@ -145,7 +151,7 @@ app.post('/intakes', async (c) => {
     date: date(body.date),
     time: time as string,
     kcal: Math.round(num(body.kcal, 1, 10000, 'kcal')),
-    label: typeof body.label === 'string' ? body.label.trim().slice(0, 40) : '',
+    label: mealText(body.label),
   }
   return c.json(await db.addIntake(c.env.DB, c.get('userId'), entry))
 })
@@ -185,7 +191,7 @@ app.post('/estimate', async (c) => {
     return c.json({ error: `写真からの計算は1日${DAILY_ESTIMATE_LIMIT}回までです。手入力で記録してください`, remaining }, 429)
   }
   try {
-    const estimate = await estimateCalories(c.env.ANTHROPIC_API_KEY, body.image, mediaType)
+    const estimate = await estimateCalories(c.env.ANTHROPIC_API_KEY, body.image, mediaType, mealText(body.note))
     if (estimate.items.length === 0) return c.json({ error: '食べ物が写っていないようです', remaining }, 422)
     return c.json({ ...estimate, remaining })
   } catch (err) {

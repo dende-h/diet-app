@@ -8,7 +8,9 @@ import {
   localTime,
   localToday,
   MAX_EXERCISE_LENGTH,
+  MAX_MEAL_LABEL_LENGTH,
   MAX_WEIGHINS_PER_DAY,
+  mealLabel,
   compareRecords,
   toDayNum,
   weightAsOf,
@@ -172,16 +174,18 @@ function CalorieCard({
     e.target.value = ''
     if (!file) return
     if (!timeEdited) setTime(localTime())
+    // 先に書いた内容は、写真の補足としてAIに渡す
+    const note = label.trim()
     setPhoto({ status: 'loading' })
     try {
       const image = await photoToJpeg(file)
       const estimate = await api<CalorieEstimate & { remaining: number }>('/estimate', {
         method: 'POST',
         // 回数は利用者の「今日」で数える（記録する日付とは別）
-        body: { image: image.data, mediaType: image.mediaType, date: localToday() },
+        body: { image: image.data, mediaType: image.mediaType, date: localToday(), note },
       })
       setKcal(String(estimate.kcal))
-      setLabel(estimate.label)
+      setLabel(mealLabel(estimate, note))
       setPhoto({ status: 'done', estimate })
       setPhotoLeft(estimate.remaining)
     } catch (err) {
@@ -259,6 +263,14 @@ function CalorieCard({
       )}
 
       <form className="intake-form" onSubmit={submit}>
+        <input
+          type="text"
+          maxLength={MAX_MEAL_LABEL_LENGTH}
+          placeholder="内容（例: 親子丼 ご飯少なめ）"
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          aria-label="食事の内容"
+        />
         {/* スマホでは capture つきの方がすぐ背面カメラを開く（撮った写真は端末に保存されない機種が多い） */}
         <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => void onPhoto(e)} />
         <input ref={libraryRef} type="file" accept="image/*" hidden onChange={(e) => void onPhoto(e)} />
@@ -295,7 +307,9 @@ function CalorieCard({
           </p>
         ) : (
           photoLeft !== null && (
-            <p className="muted small photo-left">食事の写真からカロリーを計算します（今日あと{photoLeft}回）</p>
+            <p className="muted small photo-left">
+              写真からカロリーを計算（今日あと{photoLeft}回）。内容を先に書くと、AIが参考にします
+            </p>
           )
         )}
         {photo.status === 'loading' && <p className="muted small">AIがカロリーを計算しています…</p>}
@@ -342,15 +356,26 @@ function ExerciseCard({ date, today }: { date: string; today: string }) {
   const { data, saveExercise } = useStore()
   const saved = data!.exercises.find((e) => e.date === date)?.text ?? ''
   const [text, setText] = useState(saved)
+  // 保存済みのときは内容を表示し、「編集」で書き直す（保存できたことが分かるように）
+  const [editing, setEditing] = useState(!saved)
   const [busy, setBusy] = useState(false)
   const dirty = text.trim() !== saved
+  const title = (
+    <div className="card-title">
+      <TitleWithHelp title={date === today ? '今日の運動' : 'この日の運動'} help="運動の記録について">
+        <ExerciseHelp />
+      </TitleWithHelp>
+    </div>
+  )
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
+    const value = text.trim()
     setBusy(true)
     try {
-      await saveExercise(date, text.trim())
-      setText(text.trim())
+      await saveExercise(date, value)
+      setText(value)
+      setEditing(!value)
     } catch {
       alert('保存できませんでした')
     } finally {
@@ -358,13 +383,29 @@ function ExerciseCard({ date, today }: { date: string; today: string }) {
     }
   }
 
+  if (!editing) {
+    return (
+      <section className="card form">
+        {title}
+        <p className="saved-text">{saved}</p>
+        <div className="form-actions">
+          <button type="button" className="button secondary" onClick={() => setEditing(true)}>
+            編集
+          </button>
+          <span className="saved-mark small">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 12.5l4.5 4.5L19 7.5" />
+            </svg>
+            保存済み
+          </span>
+        </div>
+      </section>
+    )
+  }
+
   return (
     <form className="card form" onSubmit={submit}>
-      <div className="card-title">
-        <TitleWithHelp title={date === today ? '今日の運動' : 'この日の運動'} help="運動の記録について">
-          <ExerciseHelp />
-        </TitleWithHelp>
-      </div>
+      {title}
       <textarea
         rows={2}
         maxLength={MAX_EXERCISE_LENGTH}
@@ -375,9 +416,20 @@ function ExerciseCard({ date, today }: { date: string; today: string }) {
       />
       <div className="form-actions">
         <button className="button" disabled={busy || !dirty}>
-          保存
+          {busy ? '保存中…' : '保存'}
         </button>
-        {!dirty && saved && <span className="muted small">保存済み</span>}
+        {saved && (
+          <button
+            type="button"
+            className="link-button"
+            onClick={() => {
+              setText(saved)
+              setEditing(false)
+            }}
+          >
+            キャンセル
+          </button>
+        )}
       </div>
     </form>
   )

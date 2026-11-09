@@ -7,6 +7,7 @@ import {
   computePlan,
   dailyWeights,
   isValidDate,
+  mealLabel,
   movingAverage,
   refWeightAt,
   weightAsOf,
@@ -148,5 +149,32 @@ describe('dailyWeights', () => {
       { date: '2026-01-01', weight: 81.0 },
       { date: '2026-01-02', weight: 80.1 },
     ])
+  })
+})
+
+describe('mealLabel', () => {
+  const estimate = {
+    kcal: 540,
+    label: '親子丼・味噌汁',
+    items: [
+      { name: '親子丼', kcal: 500 },
+      { name: '味噌汁', kcal: 40 },
+    ],
+  }
+
+  it('uses the dish names when there is no note', () => {
+    expect(mealLabel(estimate, '')).toBe('親子丼・味噌汁')
+  })
+
+  it('puts the dish names in front of a note that has none', () => {
+    expect(mealLabel(estimate, 'ご飯少なめ')).toBe('親子丼・味噌汁（ご飯少なめ）')
+  })
+
+  it('keeps a note that already names every dish', () => {
+    expect(mealLabel(estimate, '親子丼と味噌汁 ご飯少なめ')).toBe('親子丼と味噌汁 ご飯少なめ')
+  })
+
+  it('stays within the length limit', () => {
+    expect(mealLabel(estimate, 'あ'.repeat(60))).toHaveLength(60)
   })
 })

@@ -27,6 +27,7 @@ const SYSTEM = `あなたは減量に取り組む人に寄り添うパーソナ�
 - 体重は日々の水分などで上下するので、1回の増減より数日〜1週間の流れを見る。日によって量った時刻が違うときは、その違いも考慮する。
 - 運動の記録（自由記述）があれば、内容に具体的に触れる。運動の消費カロリーは計算せず、摂取ボーダーを運動の分だけ増やすような助言もしない。
 - 食事の時刻が分かるときは、遅い時間の食事や間隔なども必要に応じて考慮する。
+- 食事の内容（本人が書いたもの、または写真から推定した料理名）があれば、具体的に触れる。量や栄養の偏り（たんぱく質・野菜が少ない、揚げ物が続く など）に気づいたら、責めずに次の食事で取り入れやすい工夫として伝える。
 - 責めたり不安をあおったりしない。うまくいった点は具体的に褒める。
 - 記録がない日は、記録すると振り返りやすくなる、と軽く促す程度にする。
 - 極端な食事制限や無理なペースは勧めない。体調不良や医療的な判断が必要そうなら医師への相談を勧める。`
@@ -127,7 +128,7 @@ export function buildReport(data: UserData, today: string, seq: number): string 
     const meals = intakes.filter((i) => i.date === d).sort((a, b) => a.time.localeCompare(b.time) || a.id - b.id)
     if (meals.length === 0) continue
     lines.push('', `${label}の食事:`)
-    for (const m of meals) lines.push(`${m.time || '時刻不明'} ${m.label || '食事'} ${kcal(m.kcal)}`)
+    for (const m of meals) lines.push(`${m.time || '時刻不明'} ${m.label || '（内容の記録なし）'} ${kcal(m.kcal)}`)
   }
 
   lines.push('', '直近7日の運動（本人の自由記述。記録がある日だけ）:')
