@@ -1,12 +1,13 @@
-import type {
-  ExerciseEntry,
-  Goal,
-  IntakeEntry,
-  Profile,
-  Sex,
-  StoredFeedback,
-  UserData,
-  WeightRecord,
+import {
+  MAX_REVIEW_GENERATIONS,
+  type ExerciseEntry,
+  type Goal,
+  type IntakeEntry,
+  type Profile,
+  type Sex,
+  type StoredFeedback,
+  type UserData,
+  type WeightRecord,
 } from '../shared/calc'
 import { isEncrypted, type Cipher } from './crypto'
 
@@ -247,6 +248,107 @@ export async function releaseFeedback(db: D1Database, userId: string, date: stri
     .prepare("DELETE FROM feedbacks WHERE user_id = ? AND date = ? AND seq = ? AND status = 'pending'")
     .bind(userId, date, seq)
     .run()
+}
+
+// ---- 今日のまとめ（1人1日1件） ----
+
+interface ReviewRow {
+  content: string
+  status: 'pending' | 'done'
+  generations: number
+}
+
+/** content は作り直し中（pending）でも前の版が入っている。まだ一度もできていなければ空 */
+export async function getReview(db: D1Database, cipher: Cipher, userId: string, date: string) {
+  const row = await db
+    .prepare('SELECT content, status, generations FROM daily_reviews WHERE user_id = ? AND date = ?')
+    .bind(userId, date)
+    .first<ReviewRow>()
+  if (!row) return null
+  return { ...row, content: row.generations > 0 ? await cipher.decrypt(row.content, 'daily_reviews.content') : '' }
+}
+
+/**
+ * まとめの生成権を取る。true なら呼び出し側がAIを呼ぶ。
+ * regenerate が false なら、まだないときだけ取る（夜の自動生成）。true ならできているものを作り直す（回数に上限あり）。
+ * 生成途中で落ちた pending が2分以上残っていれば取り直す。
+ */
+export async function claimReview(db: D1Database, userId: string, date: string, regenerate: boolean): Promise<boolean> {
+  const inserted = await db
+    .prepare(
+      "INSERT INTO daily_reviews (user_id, date, status) VALUES (?, ?, 'pending') ON CONFLICT (user_id, date) DO NOTHING",
+    )
+    .bind(userId, date)
+    .run()
+  if (inserted.meta.changes === 1) return true
+  const claimed = await db
+    .prepare(
+      `UPDATE daily_reviews SET status = 'pending', created_at = datetime('now')
+       WHERE user_id = ?1 AND date = ?2 AND generations < ?3
+         AND ((status = 'pending' AND created_at < datetime('now', '-2 minutes'))
+           OR (?4 = 1 AND status = 'done'))`,
+    )
+    .bind(userId, date, MAX_REVIEW_GENERATIONS, regenerate ? 1 : 0)
+    .run()
+  return claimed.meta.changes === 1
+}
+
+export async function completeReview(db: D1Database, cipher: Cipher, userId: string, date: string, content: string) {
+  await db
+    .prepare(
+      `UPDATE daily_reviews SET content = ?, status = 'done', generations = generations + 1, created_at = datetime('now')
+       WHERE user_id = ? AND date = ?`,
+    )
+    .bind(await cipher.encrypt(content, 'daily_reviews.content'), userId, date)
+    .run()
+}
+
+/** 生成に失敗したとき。初回なら行を消し、作り直しなら前の版に戻す */
+export async function releaseReview(db: D1Database, userId: string, date: string) {
+  await db.batch([
+    db
+      .prepare("DELETE FROM daily_reviews WHERE user_id = ? AND date = ? AND status = 'pending' AND generations = 0")
+      .bind(userId, date),
+    db
+      .prepare("UPDATE daily_reviews SET status = 'done' WHERE user_id = ? AND date = ? AND status = 'pending'")
+      .bind(userId, date),
+  ])
+}
+
+/** プロフィールを登録しているユーザー（夜のまとめの対象） */
+export async function listUserIds(db: D1Database): Promise<string[]> {
+  const { results } = await db.prepare('SELECT user_id FROM profiles').all<{ user_id: string }>()
+  return results.map((r) => r.user_id)
+}
+
+// ---- 通知の送り先（Web Push の購読） ----
+
+export interface PushSubscriptionRow {
+  endpoint: string
+  p256dh: string
+  auth: string
+}
+
+export async function savePushSubscription(db: D1Database, userId: string, s: PushSubscriptionRow) {
+  await db
+    .prepare(
+      `INSERT INTO push_subscriptions (endpoint, user_id, p256dh, auth) VALUES (?, ?, ?, ?)
+       ON CONFLICT (endpoint) DO UPDATE SET user_id = excluded.user_id, p256dh = excluded.p256dh, auth = excluded.auth`,
+    )
+    .bind(s.endpoint, userId, s.p256dh, s.auth)
+    .run()
+}
+
+export async function listPushSubscriptions(db: D1Database, userId: string): Promise<PushSubscriptionRow[]> {
+  const { results } = await db
+    .prepare('SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = ?')
+    .bind(userId)
+    .all<PushSubscriptionRow>()
+  return results
+}
+
+export async function deletePushSubscription(db: D1Database, userId: string, endpoint: string) {
+  await db.prepare('DELETE FROM push_subscriptions WHERE user_id = ? AND endpoint = ?').bind(userId, endpoint).run()
 }
 
 // ---- 暗号化を入れる前に保存された値の暗号化 ----

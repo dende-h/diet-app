@@ -58,6 +58,27 @@ export interface StoredFeedback {
   content: string
 }
 
+/** 夜に自動で作る「今日のまとめ」（1人1日1件。GET /api/reviews/:date） */
+export interface DailyReview {
+  content: string
+  /** 作った回数。自動で1回、記録を足したあとの作り直しで1回の最大2回 */
+  generations: number
+}
+
+export const MAX_REVIEW_GENERATIONS = 2
+
+/** まとめを自動で作る時刻（日本時間の時）。実際の起動時刻は wrangler.jsonc の triggers.crons（UTC） */
+export const REVIEW_HOUR = 22
+
+/** その日に体重・食事・運動のどれかを記録しているか（何もない日はまとめを作らない） */
+export function hasRecords(data: Pick<UserData, 'weights' | 'intakes' | 'exercises'>, date: string): boolean {
+  return (
+    data.weights.some((w) => w.date === date) ||
+    data.intakes.some((i) => i.date === date) ||
+    data.exercises.some((e) => e.date === date)
+  )
+}
+
 export interface IntakeEntry {
   id: number
   date: string

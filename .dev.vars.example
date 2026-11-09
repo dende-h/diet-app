@@ -4,3 +4,6 @@ ANTHROPIC_API_KEY=sk-ant-xxx
 # 体重などを暗号化する鍵（32バイトを base64 にしたもの）。作り方:
 # node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 DATA_KEY=
+# スマホへの通知に使う鍵（任意。P-256 の秘密鍵の JWK）。作り方:
+# node -e "const {privateKey}=require('crypto').generateKeyPairSync('ec',{namedCurve:'P-256'});console.log(JSON.stringify(privateKey.export({format:'jwk'})))"
+VAPID_PRIVATE_KEY=

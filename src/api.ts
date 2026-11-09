@@ -9,6 +9,8 @@ export class ApiError extends Error {
   }
 }
 
+export type Api = ReturnType<typeof useApi>
+
 /** Clerkのセッショントークンを付けて /api を呼ぶ */
 export function useApi() {
   const { getToken } = useAuth()

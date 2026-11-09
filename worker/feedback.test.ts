@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { UserData } from '../shared/calc'
-import { buildReport } from './feedback'
+import { buildDailyReport, buildReport } from './feedback'
 
 const data: UserData = {
   profile: { sex: 'female', birthYear: 1992, heightCm: 158, activity: 1.375 },
@@ -65,5 +65,28 @@ describe('buildReport', () => {
 
   it('requires profile and goal', () => {
     expect(() => buildReport({ ...data, goal: null }, '2026-10-30', 1)).toThrow()
+  })
+})
+
+describe('buildDailyReport', () => {
+  const report = buildDailyReport(data, '2026-10-29')
+
+  it('names the day and its weigh-ins', () => {
+    expect(report).toContain('振り返る日: 2026-10-29')
+    expect(report).toContain('この日の体重: 06:50 60.4kg / 22:15 61.1kg')
+  })
+
+  it('totals the whole day against the border', () => {
+    expect(report).toMatch(/この日の合計: 1,450kcal（ボーダー比 [+-]\d+）/)
+    expect(report).toContain('この日の食事:\n時刻不明 昼食 550kcal\n19:30 夕食 900kcal')
+    expect(report).not.toContain('昨日の食事')
+  })
+
+  it('marks the day exercise', () => {
+    expect(report).toContain('10/29（この日）: walk 30min')
+  })
+
+  it('reports a day with no meals', () => {
+    expect(buildDailyReport(data, '2026-10-30')).toContain('この日の合計: 記録なし')
   })
 })

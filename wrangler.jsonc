@@ -17,6 +17,9 @@
       "database_id": "11300b09-8351-434a-a180-21a6bbc4c767",
       "migrations_dir": "migrations"
     }
-  ]
-  // シークレット（wrangler secret put で設定）: CLERK_SECRET_KEY, ANTHROPIC_API_KEY
+  ],
+  // 毎晩の「今日のまとめ」。UTC 13:00 = 日本時間 22:00。30分後の2回目は、1回目で失敗した人の分だけ作り直す
+  "triggers": { "crons": ["0 13 * * *", "30 13 * * *"] },
+  "vars": { "PUSH_SUBJECT": "https://diet-app.dende0206.workers.dev" }
+  // シークレット（wrangler secret put で設定）: CLERK_SECRET_KEY, ANTHROPIC_API_KEY, DATA_KEY, VAPID_PRIVATE_KEY
 }

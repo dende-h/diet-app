@@ -4,7 +4,9 @@ import {
   BORDER_RATIO,
   DAILY_ESTIMATE_LIMIT,
   MAX_EXERCISE_LENGTH,
+  MAX_REVIEW_GENERATIONS,
   MAX_WEIGHINS_PER_DAY,
+  REVIEW_HOUR,
   type CalorieTarget,
   type Plan,
 } from '../../shared/calc'
@@ -99,8 +101,31 @@ export function ExerciseHelp() {
       <h3>書くタイミング</h3>
       <p>
         AIのひとことは体重を記録したときに作られます。その日の2回目の体重を記録する前に書いておくと、そのときのひとことに反映されます。
+        夜{REVIEW_HOUR}時ごろの「今日のまとめ」までに書いておけば、まとめにも入ります。
       </p>
       <p>空にして保存すると、その日の記録を消せます。</p>
+    </>
+  )
+}
+
+export function ReviewHelp() {
+  return (
+    <>
+      <p>
+        毎晩{REVIEW_HOUR}時ごろ、その日の体重・食事・運動の記録をもとに、AIが1日をまとめて振り返ります。体重を記録したときのひとことと違い、1日分の記録がそろった状態で書きます。
+      </p>
+      <ul>
+        <li>何も記録していない日は作られません。</li>
+        <li>
+          {REVIEW_HOUR}時より後に食事などを記録したときは「作り直す」で、足した記録を入れて作り直せます（1日{MAX_REVIEW_GENERATIONS - 1}回まで）。
+        </li>
+        <li>{REVIEW_HOUR}時の時点で記録がなく作られなかった日も、あとから「まとめを作る」で作れます（今日と昨日の分）。</li>
+        <li>前の日のまとめは、日付を戻すと読めます。</li>
+      </ul>
+      <h3>通知</h3>
+      <p>
+        設定の「夜のまとめの通知」をオンにすると、まとめができたときにスマホに通知が届きます。通知を押すと、その日のまとめが開きます。通知には記録の中身は表示されません。
+      </p>
     </>
   )
 }

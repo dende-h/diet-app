@@ -7,7 +7,9 @@ import {
   DAILY_ESTIMATE_LIMIT,
   isValidTime,
   MAX_EXERCISE_LENGTH,
+  hasRecords,
   MAX_MEAL_LABEL_LENGTH,
+  MAX_REVIEW_GENERATIONS,
   MAX_WEIGHINS_PER_DAY,
   type Goal,
   type Profile,
@@ -15,19 +17,10 @@ import {
 import { Cipher } from './crypto'
 import * as db from './db'
 import { estimateCalories } from './estimate'
+import type { Bindings } from './env'
 import { generateFeedback } from './feedback'
-
-type Bindings = {
-  DB: D1Database
-  CLERK_SECRET_KEY: string
-  /** 任意。ClerkのJWT公開鍵(PEM)。設定するとClerkへの通信なしでトークンを検証する */
-  CLERK_JWT_KEY?: string
-  ANTHROPIC_API_KEY: string
-  /** 任意。カンマ区切りで指定すると、そのClerkユーザー以外はAPIを使えなくなる */
-  ALLOWED_USER_IDS?: string
-  /** 体重などを暗号化する鍵（32バイトを base64 にしたもの） */
-  DATA_KEY: string
-}
+import { fromB64url, isPushEndpoint } from './push'
+import { allowedUsers, getVapid, notify, runNightlyReviews, writeReview } from './reviews'
 
 const app = new Hono<{ Bindings: Bindings; Variables: { userId: string; cipher: Cipher } }>().basePath('/api')
 
@@ -87,8 +80,8 @@ app.use('*', async (c, next) => {
   } catch {
     return c.json({ error: 'unauthorized' }, 401)
   }
-  const allowed = c.env.ALLOWED_USER_IDS?.split(',').map((s) => s.trim()).filter(Boolean)
-  if (allowed?.length && !allowed.includes(userId)) return c.json({ error: 'forbidden' }, 403)
+  const allowed = allowedUsers(c.env)
+  if (allowed && !allowed.includes(userId)) return c.json({ error: 'forbidden' }, 403)
   c.set('userId', userId)
   c.set('cipher', await Cipher.create(c.env.DATA_KEY, userId))
   await next()
@@ -250,4 +243,86 @@ app.post('/feedbacks/:date/:seq', async (c) => {
   }
 })
 
-export default app
+// ---- 今日のまとめ（毎晩自動で作る。記録を足したときは作り直せる） ----
+
+app.get('/reviews/:date', async (c) => {
+  const review = await db.getReview(c.env.DB, c.get('cipher'), c.get('userId'), date(c.req.param('date')))
+  return c.json({
+    review: review && review.generations > 0 ? { content: review.content, generations: review.generations } : null,
+    pending: review?.status === 'pending',
+  })
+})
+
+// まとめを作る（自動で作られていなければ）、または作り直す。1日に作れるのは MAX_REVIEW_GENERATIONS 回まで
+app.post('/reviews/:date', async (c) => {
+  const userId = c.get('userId')
+  const cipher = c.get('cipher')
+  const d = date(c.req.param('date'))
+  const today = serverToday()
+  if (d < addDays(today, -1) || d > addDays(today, 1)) throw new BadRequest('date is out of range')
+
+  const existing = await db.getReview(c.env.DB, cipher, userId, d)
+  if (existing && existing.generations >= MAX_REVIEW_GENERATIONS && existing.status === 'done') {
+    return c.json({ error: `まとめを作れるのは1日${MAX_REVIEW_GENERATIONS}回までです` }, 409)
+  }
+  const data = await db.loadUserData(c.env.DB, cipher, userId)
+  if (!data.profile || !data.goal) return c.json({ status: 'unavailable' })
+  if (!hasRecords(data, d)) throw new BadRequest('この日の記録がありません')
+
+  const result = await writeReview(c.env, cipher, userId, d, data, existing?.status === 'done')
+  if (result === 'error') return c.json({ status: 'error' }, 502)
+  if (result === 'pending') return c.json({ status: 'pending' })
+  const review = await db.getReview(c.env.DB, cipher, userId, d)
+  return c.json({ status: 'done', review: { content: review!.content, generations: review!.generations } })
+})
+
+// ---- スマホへの通知（Web Push） ----
+
+// 端末で購読するときに使う公開鍵
+app.get('/push/key', async (c) => {
+  const vapid = await getVapid(c.env)
+  if (!vapid) return c.json({ error: '通知の準備ができていません' }, 503)
+  return c.json({ publicKey: vapid.publicKey })
+})
+
+/** 端末が発行した鍵（base64url）が決まった長さか */
+function pushKey(value: unknown, bytes: number, name: string): string {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+=*$/.test(value) || fromB64url(value).length !== bytes) {
+    throw new BadRequest(`invalid ${name}`)
+  }
+  return value
+}
+
+app.put('/push/subscriptions', async (c) => {
+  const body = await c.req.json<{ endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } }>()
+  if (!isPushEndpoint(body.endpoint)) throw new BadRequest('invalid endpoint')
+  await db.savePushSubscription(c.env.DB, c.get('userId'), {
+    endpoint: body.endpoint,
+    p256dh: pushKey(body.keys?.p256dh, 65, 'p256dh'),
+    auth: pushKey(body.keys?.auth, 16, 'auth'),
+  })
+  return c.body(null, 204)
+})
+
+app.delete('/push/subscriptions', async (c) => {
+  const body = await c.req.json<{ endpoint?: unknown }>()
+  if (typeof body.endpoint !== 'string') throw new BadRequest('endpoint must be a string')
+  await db.deletePushSubscription(c.env.DB, c.get('userId'), body.endpoint)
+  return c.body(null, 204)
+})
+
+// 設定画面の「テスト通知」。自分の端末にだけ送る
+app.post('/push/test', async (c) => {
+  const vapid = await getVapid(c.env)
+  if (!vapid) return c.json({ error: '通知の準備ができていません' }, 503)
+  const result = await notify(c.env, vapid, c.get('userId'), { title: 'へるログ', body: 'テスト通知です。毎晩のまとめはこのように届きます' })
+  return c.json(result)
+})
+
+export default {
+  fetch: app.fetch,
+  // 毎晩の「今日のまとめ」（時刻は wrangler.jsonc の triggers.crons）
+  scheduled(_controller, env, ctx) {
+    ctx.waitUntil(runNightlyReviews(env))
+  },
+} satisfies ExportedHandler<Bindings>

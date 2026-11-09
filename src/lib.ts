@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { localToday, type StoredFeedback } from '../shared/calc'
-import { useApi } from './api'
+import { localToday, type DailyReview, type StoredFeedback } from '../shared/calc'
+import { ApiError, useApi } from './api'
 
 export const APP_NAME = 'へるログ'
 
@@ -32,7 +32,22 @@ export function useToday(): string {
   return today
 }
 
-export type Route = 'home' | 'history' | 'graph' | 'settings'
+/** 今の時（0〜23）。useToday と同じく、開いたままでも追従する */
+export function useHour(): number {
+  const [hour, setHour] = useState(() => new Date().getHours())
+  useEffect(() => {
+    const update = () => setHour(new Date().getHours())
+    const timer = setInterval(update, 60_000)
+    document.addEventListener('visibilitychange', update)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', update)
+    }
+  }, [])
+  return hour
+}
+
+export type Route ='home' | 'history' | 'graph' | 'settings'
 
 function parseRoute(hash: string): Route {
   const name = hash.replace(/^#\/?/, '')
@@ -134,4 +149,81 @@ export function useWeighInFeedbacks(date: string, recorded: number[], live: bool
     get: (seq: number): WeighInFeedback | undefined => items[`${date}:${seq}`],
     retry: (seq: number) => void generate(date, seq),
   }
+}
+
+type ReviewResponse = { review: DailyReview | null; pending: boolean }
+type CreateReviewResponse = { status: 'done'; review: DailyReview } | { status: 'pending' } | { status: 'unavailable' }
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/**
+ * その日の「今日のまとめ」（毎晩サーバーが自動で作る）。
+ * 通知を押してアプリに戻ってきたときにも届いているよう、画面が前に出るたびに読み直す。
+ */
+export function useDailyReview(date: string) {
+  const api = useApi()
+  const apiRef = useRef(api)
+  useEffect(() => {
+    apiRef.current = api
+  })
+  const [review, setReview] = useState<DailyReview | null>(null)
+  const [loaded, setLoaded] = useState(false)
+  const [writing, setWriting] = useState(false)
+  const [error, setError] = useState('')
+
+  /** 作っている途中（pending）なら、できるまで少しずつ待つ */
+  const waitDone = useCallback(async () => {
+    for (let attempt = 0; attempt < 20; attempt++) {
+      await sleep(4000)
+      const res = await apiRef.current<ReviewResponse>(`/reviews/${date}`)
+      if (!res.pending) return res.review
+    }
+    throw new Error('review timed out')
+  }, [date])
+
+  const load = useCallback(async () => {
+    try {
+      const res = await apiRef.current<ReviewResponse>(`/reviews/${date}`)
+      setReview(res.review)
+      setLoaded(true)
+      if (!res.pending) return
+      setWriting(true)
+      setReview(await waitDone())
+    } catch {
+      setLoaded(true)
+    } finally {
+      setWriting(false)
+    }
+  }, [date, waitDone])
+
+  useEffect(() => {
+    void load()
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void load()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [load])
+
+  /** 自動で作られていなければ作り、できていれば作り直す */
+  const create = useCallback(async () => {
+    setWriting(true)
+    setError('')
+    try {
+      const res = await apiRef.current<CreateReviewResponse>(`/reviews/${date}`, { method: 'POST' })
+      if (res.status === 'done') setReview(res.review)
+      else if (res.status === 'pending') setReview(await waitDone())
+      else throw new Error('review unavailable')
+    } catch (err) {
+      setError(
+        err instanceof ApiError && err.status < 500
+          ? err.message
+          : 'まとめを作れませんでした。時間をおいてもう一度お試しください。',
+      )
+    } finally {
+      setWriting(false)
+    }
+  }, [date, waitDone])
+
+  return { review, loaded, writing, error, create }
 }

@@ -4,13 +4,16 @@ import {
   calorieTarget,
   computePlan,
   DAILY_ESTIMATE_LIMIT,
+  hasRecords,
   intakeTotal,
   localTime,
   localToday,
   MAX_EXERCISE_LENGTH,
   MAX_MEAL_LABEL_LENGTH,
+  MAX_REVIEW_GENERATIONS,
   MAX_WEIGHINS_PER_DAY,
   mealLabel,
+  REVIEW_HOUR,
   compareRecords,
   toDayNum,
   weightAsOf,
@@ -22,8 +25,8 @@ import {
 } from '../../shared/calc'
 import { ApiError, useApi } from '../api'
 import { TitleWithHelp } from '../components/Help'
-import { CalorieHelp, ExerciseHelp, WeekHelp, WeightHelp } from '../components/HelpTexts'
-import { formatDate, formatKcal, useWeighInFeedbacks, type WeighInFeedback } from '../lib'
+import { CalorieHelp, ExerciseHelp, ReviewHelp, WeekHelp, WeightHelp } from '../components/HelpTexts'
+import { formatDate, formatKcal, useDailyReview, useHour, useWeighInFeedbacks, type WeighInFeedback } from '../lib'
 import { photoToJpeg } from '../photo'
 import { AlreadyRecorded, useStore } from '../store'
 
@@ -63,6 +66,7 @@ export function Home({ date, setDate, today }: Props) {
         </button>
       </header>
 
+      <ReviewCard key={`review-${date}`} date={date} today={today} hasDayRecords={hasRecords(data!, date)} />
       <WeightCard key={date} date={date} today={today} records={records} />
       {/* 新しい記録へのひとことを、体重のすぐ下に出す */}
       {[...records].reverse().map((r) => (
@@ -105,6 +109,52 @@ function FeedbackCard({
           </button>
         </p>
       )}
+    </section>
+  )
+}
+
+/** 夜に自動で届く「今日のまとめ」。まだなければ、作れる時間帯だけ「まとめを作る」を出す */
+function ReviewCard({ date, today, hasDayRecords }: { date: string; today: string; hasDayRecords: boolean }) {
+  const { review, loaded, writing, error, create } = useDailyReview(date)
+  // サーバーが作り直しを受け付けるのは今日と昨日だけ
+  const recent = date >= addDays(today, -1)
+  const hour = useHour()
+  const lateEnough = date < today || hour >= REVIEW_HOUR
+  const canCreate = !review && recent && lateEnough && hasDayRecords
+  const left = review ? MAX_REVIEW_GENERATIONS - review.generations : 0
+
+  if (!loaded || (!review && !writing && !canCreate && !error)) return null
+  return (
+    <section className="card feedback" aria-live="polite">
+      <div className="card-title">
+        <TitleWithHelp title={date === today ? '今日のまとめ' : `${formatDate(date)}のまとめ`} help="今日のまとめについて">
+          <ReviewHelp />
+        </TitleWithHelp>
+      </div>
+      {review && <p className="feedback-text">{review.content}</p>}
+      {writing && <p className="muted">AIがまとめを書いています…</p>}
+      {!writing && canCreate && (
+        <>
+          <p className="muted small">この日のまとめはまだありません。</p>
+          <button className="button secondary" onClick={() => void create()}>
+            まとめを作る
+          </button>
+        </>
+      )}
+      {!writing && review && recent && left > 0 && (
+        <p className="muted small">
+          記録を足したときは
+          <button
+            className="link-button"
+            onClick={() => {
+              if (confirm(`今の記録でまとめを作り直しますか？（作り直せるのはあと${left}回です）`)) void create()
+            }}
+          >
+            作り直す
+          </button>
+        </p>
+      )}
+      {error && <p className="warning small">{error}</p>}
     </section>
   )
 }

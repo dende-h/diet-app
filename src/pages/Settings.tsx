@@ -1,7 +1,16 @@
 import { SignOutButton, useUser } from '@clerk/react'
-import { useState, type FormEvent } from 'react'
-import { ACTIVITY_LEVELS, addDays, localToday, toDayNum, weightAsOf, type Sex } from '../../shared/calc'
-import { ApiError } from '../api'
+import { useEffect, useState, type FormEvent } from 'react'
+import { ACTIVITY_LEVELS, addDays, localToday, REVIEW_HOUR, toDayNum, weightAsOf, type Sex } from '../../shared/calc'
+import { ApiError, useApi } from '../api'
+import {
+  currentSubscription,
+  isPushOn,
+  NoServiceWorker,
+  pushSupport,
+  PushDenied,
+  subscribePush,
+  unsubscribePush,
+} from '../push'
 import { PinCard } from '../components/PinSettings'
 import { formatDate } from '../lib'
 import { useStore } from '../store'
@@ -16,6 +25,7 @@ export function Settings({ onboarding = false, onSaved }: { onboarding?: boolean
       </header>
       <ProfileForm />
       {(data!.profile || !onboarding) && <GoalForm onboarding={onboarding} onSaved={onSaved} />}
+      {!onboarding && <NotificationCard />}
       {!onboarding && <PinCard />}
       <AccountCard />
     </>
@@ -244,6 +254,99 @@ function GoalForm({ onboarding, onSaved }: { onboarding: boolean; onSaved: () =>
         )}
       </div>
     </form>
+  )
+}
+
+function NotificationCard() {
+  const api = useApi()
+  const [support] = useState(pushSupport)
+  const [on, setOn] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+
+  useEffect(() => {
+    if (support !== 'ok') return
+    currentSubscription()
+      .then((sub) => setOn(isPushOn(sub)))
+      .catch(() => setOn(false))
+  }, [support])
+
+  const run = async (action: () => Promise<string>) => {
+    setBusy(true)
+    setMessage('')
+    try {
+      setMessage(await action())
+    } catch (err) {
+      if (err instanceof PushDenied) {
+        setMessage('通知が許可されていません。端末の設定で、へるログの通知を許可してから、もう一度オンにしてください。')
+      } else if (err instanceof NoServiceWorker) {
+        setMessage('この画面では通知を使えません。')
+      } else if (err instanceof ApiError && err.status === 503) {
+        setMessage('通知の準備がまだできていません。')
+      } else {
+        setMessage('うまくいきませんでした。時間をおいてもう一度お試しください。')
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const turnOn = () =>
+    run(async () => {
+      await subscribePush(api)
+      setOn(true)
+      return 'オンにしました。'
+    })
+  const turnOff = () =>
+    run(async () => {
+      await unsubscribePush(api)
+      setOn(false)
+      return 'オフにしました。'
+    })
+  const test = () =>
+    run(async () => {
+      const res = await api<{ sent: number }>('/push/test', { method: 'POST' })
+      return res.sent > 0 ? 'テスト通知を送りました。届くまで少しかかることがあります。' : '通知を送れませんでした。一度オフにして、もう一度オンにしてください。'
+    })
+
+  return (
+    <section className="card">
+      <div className="card-title">
+        夜のまとめの通知 <span className={on ? 'badge ok' : 'badge'}>{on ? 'オン' : 'オフ'}</span>
+      </div>
+      <p className="muted small">
+        毎晩{REVIEW_HOUR}時ごろ、AIがその日の記録をまとめると、この端末に通知します。通知には体重などの記録の中身は表示しません。まとめは今日の画面で読めます。
+      </p>
+      {support === 'needs-install' && (
+        <p className="muted small">
+          iPhoneでは、ホーム画面に追加したアプリから通知をオンにできます（Safariの共有ボタン →「ホーム画面に追加」）。
+        </p>
+      )}
+      {support === 'unsupported' && <p className="muted small">この端末・ブラウザーでは通知を使えません。</p>}
+      {support === 'ok' && (
+        <div className="form-actions pin-actions">
+          {on ? (
+            <>
+              <button className="button secondary" onClick={test} disabled={busy}>
+                テスト通知を送る
+              </button>
+              <button className="link-button" onClick={turnOff} disabled={busy}>
+                オフにする
+              </button>
+            </>
+          ) : (
+            <button className="button" onClick={turnOn} disabled={busy}>
+              通知をオンにする
+            </button>
+          )}
+        </div>
+      )}
+      {message && (
+        <p className="muted small" aria-live="polite">
+          {message}
+        </p>
+      )}
+    </section>
   )
 }
 

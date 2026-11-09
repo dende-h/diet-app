@@ -4,7 +4,12 @@
 
 const PREFIX = 'v1:'
 
-export type Field = 'weights.weight' | 'goals.start_weight' | 'goals.loss_kg' | 'feedbacks.content'
+export type Field =
+  | 'weights.weight'
+  | 'goals.start_weight'
+  | 'goals.loss_kg'
+  | 'feedbacks.content'
+  | 'daily_reviews.content'
 
 const keys = new Map<string, Promise<CryptoKey>>()
 

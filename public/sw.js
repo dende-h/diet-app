@@ -13,6 +13,43 @@ self.addEventListener('activate', (event) => {
   )
 })
 
+// ---- 通知（夜のまとめ） ----
+// サーバーが送る本文は { title, body, date }。記録の中身は入っていない
+
+self.addEventListener('push', (event) => {
+  let message = {}
+  try {
+    message = event.data ? event.data.json() : {}
+  } catch {
+    // 本文が読めなくても、通知は出す（iPhoneでは出さないと購読を止められることがある）
+  }
+  event.waitUntil(
+    self.registration.showNotification(message.title || 'へるログ', {
+      body: message.body || '',
+      icon: '/icons/icon-192.png',
+      lang: 'ja',
+      tag: message.date ? `review-${message.date}` : 'herulog',
+      data: { date: message.date || null },
+    }),
+  )
+})
+
+// 通知を押したら、開いているアプリを前に出してその日を表示する（開いていなければ開く）
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  const date = event.notification.data && event.notification.data.date
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((windows) => {
+      const open = windows.find((w) => new URL(w.url).origin === self.location.origin)
+      if (open) {
+        if (date) open.postMessage({ type: 'open-date', date })
+        return open.focus()
+      }
+      return self.clients.openWindow(date ? `/?date=${date}` : '/')
+    }),
+  )
+})
+
 self.addEventListener('fetch', (event) => {
   const req = event.request
   const url = new URL(req.url)
