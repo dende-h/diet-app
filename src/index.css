@@ -420,6 +420,20 @@ textarea:focus {
   stroke-linejoin: round;
 }
 
+.photo-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.photo-preview img {
+  width: 96px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 8px;
+  flex: none;
+}
+
 .estimate {
   margin: 0;
   background: var(--accent-weak);

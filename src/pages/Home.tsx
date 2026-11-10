@@ -188,12 +188,16 @@ function CalorieCard({
   const [label, setLabel] = useState('')
   const [busy, setBusy] = useState(false)
   const [photo, setPhoto] = useState<PhotoState>({ status: 'idle' })
+  /** 選んだ写真（AIに送る前の、縮めたJPEG） */
+  const [image, setImage] = useState<{ data: string; mediaType: 'image/jpeg' } | null>(null)
+  const [preparing, setPreparing] = useState(false)
   /** 写真判定の今日の残り回数（読み込み前は null） */
   const [photoLeft, setPhotoLeft] = useState<number | null>(null)
   const cameraRef = useRef<HTMLInputElement>(null)
   const libraryRef = useRef<HTMLInputElement>(null)
   const remaining = border - total
   const over = remaining < 0
+  const busyPhoto = preparing || photo.status === 'loading'
 
   const refreshPhotoLeft = useCallback(async () => {
     try {
@@ -218,17 +222,35 @@ function CalorieCard({
     }
   }, [api])
 
+  // 写真は選んだだけでは送らない。内容（補足）を書いてから「計算する」で送る
   const onPhoto = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     // 同じ写真を選び直せるように空にしておく
     e.target.value = ''
     if (!file) return
     if (!timeEdited) setTime(localTime())
-    // 先に書いた内容は、写真の補足としてAIに渡す
+    setPreparing(true)
+    try {
+      setImage(await photoToJpeg(file))
+      setPhoto({ status: 'idle' })
+    } catch {
+      setPhoto({ status: 'error', message: '写真を読み込めませんでした' })
+    } finally {
+      setPreparing(false)
+    }
+  }
+
+  const removeImage = () => {
+    setImage(null)
+    setPhoto({ status: 'idle' })
+  }
+
+  const estimate = async () => {
+    if (!image) return
+    // 内容の欄は写真の補足としてAIに渡す（計算し直すときは、直した料理名もここに入っている）
     const note = label.trim()
     setPhoto({ status: 'loading' })
     try {
-      const image = await photoToJpeg(file)
       const estimate = await api<CalorieEstimate & { remaining: number }>('/estimate', {
         method: 'POST',
         // 回数は利用者の「今日」で数える（記録する日付とは別）
@@ -257,6 +279,7 @@ function CalorieCard({
       setTime(localTime())
       setTimeEdited(false)
       setPhoto({ status: 'idle' })
+      setImage(null)
     } catch {
       alert('保存できませんでした')
     } finally {
@@ -313,14 +336,6 @@ function CalorieCard({
       )}
 
       <form className="intake-form" onSubmit={submit}>
-        <input
-          type="text"
-          maxLength={MAX_MEAL_LABEL_LENGTH}
-          placeholder="内容（例: 親子丼 ご飯少なめ）"
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          aria-label="食事の内容"
-        />
         {/* スマホでは capture つきの方がすぐ背面カメラを開く（撮った写真は端末に保存されない機種が多い） */}
         <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => void onPhoto(e)} />
         <input ref={libraryRef} type="file" accept="image/*" hidden onChange={(e) => void onPhoto(e)} />
@@ -329,7 +344,7 @@ function CalorieCard({
             type="button"
             className="button secondary photo-button"
             onClick={() => cameraRef.current?.click()}
-            disabled={photo.status === 'loading' || photoLeft === 0}
+            disabled={busyPhoto || photoLeft === 0}
           >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path d="M4 8h3l2-3h6l2 3h3v11H4z" />
@@ -341,7 +356,7 @@ function CalorieCard({
             type="button"
             className="button secondary photo-button"
             onClick={() => libraryRef.current?.click()}
-            disabled={photo.status === 'loading' || photoLeft === 0}
+            disabled={busyPhoto || photoLeft === 0}
           >
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <rect x="4" y="5" width="16" height="14" rx="2" />
@@ -351,16 +366,49 @@ function CalorieCard({
             写真を選ぶ
           </button>
         </div>
-        {photoLeft === 0 ? (
+        {preparing && <p className="muted small">写真を読み込んでいます…</p>}
+        {image && (
+          <div className="photo-preview">
+            <img src={`data:${image.mediaType};base64,${image.data}`} alt="選んだ食事の写真" />
+            <button type="button" className="button secondary" onClick={removeImage} disabled={busyPhoto}>
+              写真を外す
+            </button>
+          </div>
+        )}
+        <input
+          type="text"
+          maxLength={MAX_MEAL_LABEL_LENGTH}
+          placeholder={image ? '内容・補足（例: カツ丼 ご飯少なめ）' : '内容（例: 親子丼 ご飯少なめ）'}
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          aria-label="食事の内容"
+        />
+        {image && (
+          <>
+            <button
+              type="button"
+              className="button"
+              onClick={() => void estimate()}
+              disabled={busyPhoto || photoLeft === 0}
+            >
+              {photo.status === 'done' ? '直した内容で計算し直す' : 'AIでカロリーを計算する'}
+            </button>
+            {photoLeft !== null && photoLeft > 0 && (
+              <p className="muted small photo-left">
+                {photo.status === 'done'
+                  ? `料理名や量が違っていたら、内容を直して計算し直せます（もう1回使います。今日あと${photoLeft}回）`
+                  : `料理名や「ご飯少なめ」などを書いてから計算すると、AIが参考にします（今日あと${photoLeft}回）`}
+              </p>
+            )}
+          </>
+        )}
+        {photoLeft === 0 && (
           <p className="muted small">
             今日の写真の判定は上限（{DAILY_ESTIMATE_LIMIT}回）に達しました。時刻とkcalを手入力してください。
           </p>
-        ) : (
-          photoLeft !== null && (
-            <p className="muted small photo-left">
-              写真からカロリーを計算（今日あと{photoLeft}回）。内容を先に書くと、AIが参考にします
-            </p>
-          )
+        )}
+        {!image && photoLeft !== null && photoLeft > 0 && (
+          <p className="muted small photo-left">写真からカロリーを計算できます（今日あと{photoLeft}回）</p>
         )}
         {photo.status === 'loading' && <p className="muted small">AIがカロリーを計算しています…</p>}
         {photo.status === 'done' && (
