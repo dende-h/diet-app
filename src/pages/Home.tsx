@@ -13,7 +13,6 @@ import {
   MAX_REVIEW_GENERATIONS,
   MAX_WEIGHINS_PER_DAY,
   mealLabel,
-  REVIEW_HOUR,
   compareRecords,
   toDayNum,
   weightAsOf,
@@ -26,7 +25,7 @@ import {
 import { ApiError, useApi } from '../api'
 import { TitleWithHelp } from '../components/Help'
 import { CalorieHelp, ExerciseHelp, ReviewHelp, WeekHelp, WeightHelp } from '../components/HelpTexts'
-import { formatDate, formatKcal, useDailyReview, useHour, useWeighInFeedbacks, type WeighInFeedback } from '../lib'
+import { formatDate, formatKcal, useDailyReview, useWeighInFeedbacks, type WeighInFeedback } from '../lib'
 import { photoToJpeg } from '../photo'
 import { AlreadyRecorded, useStore } from '../store'
 
@@ -43,9 +42,11 @@ export function Home({ date, setDate, today }: Props) {
   const target = calorieTarget(profile!, weight, date)
   const plan = computePlan(goal!, daily, today)
   const records = weights.filter((w) => w.date === date).sort(compareRecords)
+  const yesterdayHasRecords = hasRecords(data!, addDays(date, -1))
+  // 前の日に記録があれば、その日1回目の体重へのひとことの代わりに「昨日の振り返り」を書く
   const feedbacks = useWeighInFeedbacks(
     date,
-    records.map((r) => r.seq),
+    records.map((r) => r.seq).filter((seq) => !(yesterdayHasRecords && seq === 1)),
     date === today,
   )
 
@@ -66,7 +67,13 @@ export function Home({ date, setDate, today }: Props) {
         </button>
       </header>
 
-      <ReviewCard key={`review-${date}`} date={date} today={today} hasDayRecords={hasRecords(data!, date)} />
+      <ReviewCard
+        key={`review-${date}`}
+        date={date}
+        today={today}
+        dayHasRecords={yesterdayHasRecords}
+        weighedIn={records.length > 0}
+      />
       <WeightCard key={date} date={date} today={today} records={records} />
       {/* 新しい記録へのひとことを、体重のすぐ下に出す */}
       {[...records].reverse().map((r) => (
@@ -113,41 +120,67 @@ function FeedbackCard({
   )
 }
 
-/** 夜に自動で届く「今日のまとめ」。まだなければ、作れる時間帯だけ「まとめを作る」を出す */
-function ReviewCard({ date, today, hasDayRecords }: { date: string; today: string; hasDayRecords: boolean }) {
-  const { review, loaded, writing, error, create } = useDailyReview(date)
-  // サーバーが作り直しを受け付けるのは今日と昨日だけ
-  const recent = date >= addDays(today, -1)
-  const hour = useHour()
-  const lateEnough = date < today || hour >= REVIEW_HOUR
-  const canCreate = !review && recent && lateEnough && hasDayRecords
+/**
+ * 前の日を振り返る「昨日の振り返り」。今日の画面では、朝いちばんの体重を記録したときに自動で作る
+ * （その日1回目の体重へのひとことの代わり）。体重を量らなかった日は、昼にサーバーが作って通知する。
+ */
+function ReviewCard({
+  date,
+  today,
+  dayHasRecords,
+  weighedIn,
+}: {
+  date: string
+  today: string
+  /** 振り返る日（前の日）に記録があるか */
+  dayHasRecords: boolean
+  /** この日に体重を記録したか */
+  weighedIn: boolean
+}) {
+  const day = addDays(date, -1)
+  const { review, loaded, writing, error, create } = useDailyReview(day)
+  // 作ったり作り直したりできるのは今日の画面（＝昨日の分）だけ
+  const live = date === today
+  const canCreate = !review && live && dayHasRecords
   const left = review ? MAX_REVIEW_GENERATIONS - review.generations : 0
+
+  const autoStarted = useRef(false)
+  useEffect(() => {
+    if (!loaded || !canCreate || !weighedIn || writing || error || autoStarted.current) return
+    autoStarted.current = true
+    void create()
+  }, [loaded, canCreate, weighedIn, writing, error, create])
 
   if (!loaded || (!review && !writing && !canCreate && !error)) return null
   return (
     <section className="card feedback" aria-live="polite">
       <div className="card-title">
-        <TitleWithHelp title={date === today ? '今日のまとめ' : `${formatDate(date)}のまとめ`} help="今日のまとめについて">
+        <TitleWithHelp title={live ? '昨日の振り返り' : `${formatDate(day)}の振り返り`} help="昨日の振り返りについて">
           <ReviewHelp />
         </TitleWithHelp>
       </div>
       {review && <p className="feedback-text">{review.content}</p>}
-      {writing && <p className="muted">AIがまとめを書いています…</p>}
-      {!writing && canCreate && (
-        <>
-          <p className="muted small">この日のまとめはまだありません。</p>
-          <button className="button secondary" onClick={() => void create()}>
-            まとめを作る
-          </button>
-        </>
-      )}
-      {!writing && review && recent && left > 0 && (
+      {writing && <p className="muted">AIが昨日の振り返りを書いています…</p>}
+      {!writing && canCreate && !weighedIn && !error && (
         <p className="muted small">
-          記録を足したときは
+          今朝の体重を記録すると、AIが昨日の振り返りを書きます。
+          <button className="link-button" onClick={() => void create()}>
+            体重なしで今すぐ作る
+          </button>
+        </p>
+      )}
+      {!writing && canCreate && (weighedIn || error) && (
+        <button className="button secondary" onClick={() => void create()}>
+          振り返りを作る
+        </button>
+      )}
+      {!writing && review && live && left > 0 && (
+        <p className="muted small">
+          昨日の記録を足したときは
           <button
             className="link-button"
             onClick={() => {
-              if (confirm(`今の記録でまとめを作り直しますか？（作り直せるのはあと${left}回です）`)) void create()
+              if (confirm(`今の記録で振り返りを作り直しますか？（作り直せるのはあと${left}回です）`)) void create()
             }}
           >
             作り直す

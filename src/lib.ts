@@ -32,21 +32,6 @@ export function useToday(): string {
   return today
 }
 
-/** 今の時（0〜23）。useToday と同じく、開いたままでも追従する */
-export function useHour(): number {
-  const [hour, setHour] = useState(() => new Date().getHours())
-  useEffect(() => {
-    const update = () => setHour(new Date().getHours())
-    const timer = setInterval(update, 60_000)
-    document.addEventListener('visibilitychange', update)
-    return () => {
-      clearInterval(timer)
-      document.removeEventListener('visibilitychange', update)
-    }
-  }, [])
-  return hour
-}
-
 export type Route ='home' | 'history' | 'graph' | 'settings'
 
 function parseRoute(hash: string): Route {
@@ -157,7 +142,7 @@ type CreateReviewResponse = { status: 'done'; review: DailyReview } | { status: 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 /**
- * その日の「今日のまとめ」（毎晩サーバーが自動で作る）。
+ * date の日の「振り返り」（ふつうは翌朝の体重の記録で作る。体重がない日は昼にサーバーが作る）。
  * 通知を押してアプリに戻ってきたときにも届いているよう、画面が前に出るたびに読み直す。
  */
 export function useDailyReview(date: string) {
@@ -218,7 +203,7 @@ export function useDailyReview(date: string) {
       setError(
         err instanceof ApiError && err.status < 500
           ? err.message
-          : 'まとめを作れませんでした。時間をおいてもう一度お試しください。',
+          : '振り返りを作れませんでした。時間をおいてもう一度お試しください。',
       )
     } finally {
       setWriting(false)

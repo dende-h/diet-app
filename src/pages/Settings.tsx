@@ -1,6 +1,6 @@
 import { SignOutButton, useUser } from '@clerk/react'
 import { useEffect, useState, type FormEvent } from 'react'
-import { ACTIVITY_LEVELS, addDays, localToday, REVIEW_HOUR, toDayNum, weightAsOf, type Sex } from '../../shared/calc'
+import { ACTIVITY_LEVELS, addDays, localToday, REVIEW_FALLBACK_HOUR, toDayNum, weightAsOf, type Sex } from '../../shared/calc'
 import { ApiError, useApi } from '../api'
 import {
   currentSubscription,
@@ -312,10 +312,10 @@ function NotificationCard() {
   return (
     <section className="card">
       <div className="card-title">
-        夜のまとめの通知 <span className={on ? 'badge ok' : 'badge'}>{on ? 'オン' : 'オフ'}</span>
+        振り返りの通知 <span className={on ? 'badge ok' : 'badge'}>{on ? 'オン' : 'オフ'}</span>
       </div>
       <p className="muted small">
-        毎晩{REVIEW_HOUR}時ごろ、AIがその日の記録をまとめると、この端末に通知します。通知には体重などの記録の中身は表示しません。まとめは今日の画面で読めます。
+        朝の体重を記録しなかった日は、{REVIEW_FALLBACK_HOUR}時ごろにAIが昨日の振り返りを作り、この端末に通知します（体重を記録した日は、その場で今日の画面に出るので通知しません）。通知には体重などの記録の中身は表示しません。
       </p>
       {support === 'needs-install' && (
         <p className="muted small">

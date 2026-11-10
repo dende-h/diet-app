@@ -10,7 +10,7 @@
 - その日の運動を自由に書いておける（AIフィードバックの材料にするだけで、消費カロリーは計算しない）
 - グラフは縦軸がkg（「スタートからの増減」と「体重」を切り替え）、横軸が日付。線は実績の7日平均・毎週調整した目標・当初の計画
 - 体重を記録するたびに、Claudeがフィードバックを書く（記録ごとに1回なので1日最大2回）
-- 毎晩22時（日本時間）に、その日の体重・食事・運動をまとめた「今日のまとめ」をClaudeが書き、スマホに通知する（Web Push。設定でオン。何も記録していない日は作らない。記録を足したら1回だけ作り直せる）。通知には記録の中身を入れない
+- 朝いちばんの体重を記録すると、前の日の体重・食事・運動と今朝の体重から「昨日の振り返り」をClaudeが書く（その日1回目のひとことの代わり。前の日に何も記録していなければ作らない。記録を足したら1回だけ作り直せる）。朝の体重を量らなかった日は12時（日本時間）に自動で作り、スマホに通知する（Web Push。設定でオン）。通知には記録の中身を入れない
 - アプリを開くときの4桁のPINロック（端末ごとの設定。1分以上ほかのアプリを使って戻ったときも聞く。5回まちがえるとログアウト）
 
 ## 構成
@@ -19,8 +19,8 @@
 |---|---|
 | フロント | React + Vite（PWA） |
 | API | Cloudflare Workers（Hono）。`/api/*` だけWorkerが処理し、それ以外は静的アセット |
-| DB | Cloudflare D1。全テーブルをClerkのユーザーIDで分離。体重・目標の体重・AIのひとこと・今日のまとめは暗号化（AES-GCM）して保存 |
-| 定期実行・通知 | Workers の Cron Trigger で毎晩まとめを作り、Web Push（VAPID、本文は RFC 8291 で暗号化）で通知 |
+| DB | Cloudflare D1。全テーブルをClerkのユーザーIDで分離。体重・目標の体重・AIのひとこと・振り返りは暗号化（AES-GCM）して保存 |
+| 定期実行・通知 | Workers の Cron Trigger で、朝の体重がなかった日の振り返りを昼に作り、Web Push（VAPID、本文は RFC 8291 で暗号化）で通知 |
 | 認証 | Clerk（フロントの `<SignIn />`、Workerでセッショントークンを検証） |
 | AI | Claude API（AIのひとこと・写真のカロリー判定とも `claude-sonnet-5-5`） |
 | CI/CD | GitHub Actions：`main` にpushでテスト → ビルド → D1マイグレーション → デプロイ |
@@ -60,7 +60,7 @@ migrations/ D1のスキーマ
 | `ANTHROPIC_API_KEY` | AnthropicのAPIキー |
 | `DATA_KEY` | 体重などを暗号化する鍵（32バイトを base64 にしたもの）。下のコマンドで、だれの目にも触れずに作って登録できる |
 | `ALLOWED_USER_IDS`（任意） | 2人のClerkユーザーID（カンマ区切り）。設定するとそれ以外のユーザーはAPIを使えない |
-| `VAPID_PRIVATE_KEY` | スマホへの通知に使う鍵（P-256 の秘密鍵の JWK）。下のコマンドで作って登録できる。ないと、まとめは作るが通知は送らない |
+| `VAPID_PRIVATE_KEY` | スマホへの通知に使う鍵（P-256 の秘密鍵の JWK）。下のコマンドで作って登録できる。ないと、振り返りは作るが通知は送らない |
 
 ```bash
 node -e "process.stdout.write(require('crypto').randomBytes(32).toString('base64'))" | npx wrangler secret put DATA_KEY
@@ -71,7 +71,7 @@ node -e "const {privateKey}=require('crypto').generateKeyPairSync('ec',{namedCur
 ```
 
 - `VAPID_PRIVATE_KEY` を作り直すと、端末の通知の購読が使えなくなる。そのときは各端末の設定で通知を一度オフにしてからオンにし直す。
-- 夜のまとめの時刻は `wrangler.jsonc` の `triggers.crons`（UTC）。日本時間22時に1回、30分後に失敗した分だけもう1回動く。
+- 振り返りを自動で作る時刻は `wrangler.jsonc` の `triggers.crons`（UTC）。日本時間12時に1回、30分後に失敗した分だけもう1回動く。
 
 - `DATA_KEY` がないとAPIはエラーになる（平文で保存しないため）。
 - **`DATA_KEY` を消したり変えたりすると、暗号化したデータは二度と読めなくなる。** シークレットは登録後に読み出せないので、作り直しはできない。

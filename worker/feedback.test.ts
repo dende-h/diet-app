@@ -76,6 +76,12 @@ describe('buildDailyReport', () => {
     expect(report).toContain('この日の体重: 06:50 60.4kg / 22:15 61.1kg')
   })
 
+  it('adds the next morning weight, or says it is not recorded yet', () => {
+    expect(report).toContain('翌日（10/30、今日）の体重: 07:05 60.2kg')
+    expect(report).toMatch(/直近14日の体重[^]*10\/30 07:05 60\.2kg/)
+    expect(buildDailyReport(data, '2026-10-30')).toContain('翌日（10/31、今日）の体重: まだ記録なし')
+  })
+
   it('totals the whole day against the border', () => {
     expect(report).toMatch(/この日の合計: 1,450kcal（ボーダー比 [+-]\d+）/)
     expect(report).toContain('この日の食事:\n時刻不明 昼食 550kcal\n19:30 夕食 900kcal')

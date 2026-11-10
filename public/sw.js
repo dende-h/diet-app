@@ -13,7 +13,7 @@ self.addEventListener('activate', (event) => {
   )
 })
 
-// ---- 通知（夜のまとめ） ----
+// ---- 通知（昨日の振り返り） ----
 // サーバーが送る本文は { title, body, date }。記録の中身は入っていない
 
 self.addEventListener('push', (event) => {

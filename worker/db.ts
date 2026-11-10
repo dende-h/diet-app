@@ -250,7 +250,7 @@ export async function releaseFeedback(db: D1Database, userId: string, date: stri
     .run()
 }
 
-// ---- 今日のまとめ（1人1日1件） ----
+// ---- 昨日の振り返り（1人1日1件。date は振り返る日） ----
 
 interface ReviewRow {
   content: string
@@ -315,7 +315,7 @@ export async function releaseReview(db: D1Database, userId: string, date: string
   ])
 }
 
-/** プロフィールを登録しているユーザー（夜のまとめの対象） */
+/** プロフィールを登録しているユーザー（振り返りを自動で作る対象） */
 export async function listUserIds(db: D1Database): Promise<string[]> {
   const { results } = await db.prepare('SELECT user_id FROM profiles').all<{ user_id: string }>()
   return results.map((r) => r.user_id)

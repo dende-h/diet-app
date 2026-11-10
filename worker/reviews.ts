@@ -1,5 +1,6 @@
-// 夜の「今日のまとめ」。毎晩 cron（wrangler.jsonc の triggers）で作り、スマホに通知する。
-import { hasRecords, type UserData } from '../shared/calc'
+// 「昨日の振り返り」。ふつうは朝いちばんの体重を記録したときにアプリから作る（POST /reviews/:date）。
+// 体重を量らなかった日は、昼に cron（wrangler.jsonc の triggers）で作り、スマホに通知する。
+import { addDays, hasRecords, type UserData } from '../shared/calc'
 import { Cipher } from './crypto'
 import * as db from './db'
 import type { Bindings } from './env'
@@ -66,11 +67,12 @@ export async function notify(env: Bindings, vapid: Vapid, userId: string, messag
 }
 
 /**
- * 夜の自動生成。まだまとめがなく、その日に何か記録している人の分を作って通知する。
+ * 昼の自動生成。昨日の振り返りがまだなく、昨日に何か記録している人の分を作って通知する。
  * cron は2回動かし、1回目で失敗した人の分を2回目で作り直す（できている人は飛ばすので通知も1回）。
  */
-export async function runNightlyReviews(env: Bindings, now = new Date()) {
-  const date = japanDate(now)
+export async function runReviewFallback(env: Bindings, now = new Date()) {
+  const today = japanDate(now)
+  const date = addDays(today, -1)
   const allowed = allowedUsers(env)
   const userIds = (await db.listUserIds(env.DB)).filter((id) => !allowed || allowed.includes(id))
   const vapid = await getVapid(env).catch((err) => {
@@ -84,9 +86,10 @@ export async function runNightlyReviews(env: Bindings, now = new Date()) {
       const data = await db.loadUserData(env.DB, cipher, userId)
       if (!data.profile || !data.goal || !hasRecords(data, date)) continue
       if ((await writeReview(env, cipher, userId, date, data, false)) !== 'done' || !vapid) continue
-      await notify(env, vapid, userId, { title: '今日のまとめ', body: '今日の記録をAIがまとめました', date })
+      // 通知を押すと今日の画面（昨日の振り返りがいちばん上）を開く
+      await notify(env, vapid, userId, { title: '昨日の振り返り', body: '昨日の記録をAIが振り返りました', date: today })
     } catch (err) {
-      console.error('nightly review failed', err)
+      console.error('review fallback failed', err)
     }
   }
 }

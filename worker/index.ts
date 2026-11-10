@@ -20,7 +20,7 @@ import { estimateCalories } from './estimate'
 import type { Bindings } from './env'
 import { generateFeedback } from './feedback'
 import { fromB64url, isPushEndpoint } from './push'
-import { allowedUsers, getVapid, notify, runNightlyReviews, writeReview } from './reviews'
+import { allowedUsers, getVapid, notify, runReviewFallback, writeReview } from './reviews'
 
 const app = new Hono<{ Bindings: Bindings; Variables: { userId: string; cipher: Cipher } }>().basePath('/api')
 
@@ -243,7 +243,7 @@ app.post('/feedbacks/:date/:seq', async (c) => {
   }
 })
 
-// ---- 今日のまとめ（毎晩自動で作る。記録を足したときは作り直せる） ----
+// ---- 昨日の振り返り（朝の体重を記録したときにアプリが作る。昼に自動でも作る。記録を足したときは作り直せる） ----
 
 app.get('/reviews/:date', async (c) => {
   const review = await db.getReview(c.env.DB, c.get('cipher'), c.get('userId'), date(c.req.param('date')))
@@ -263,7 +263,7 @@ app.post('/reviews/:date', async (c) => {
 
   const existing = await db.getReview(c.env.DB, cipher, userId, d)
   if (existing && existing.generations >= MAX_REVIEW_GENERATIONS && existing.status === 'done') {
-    return c.json({ error: `まとめを作れるのは1日${MAX_REVIEW_GENERATIONS}回までです` }, 409)
+    return c.json({ error: `振り返りを作れるのは1日${MAX_REVIEW_GENERATIONS}回までです` }, 409)
   }
   const data = await db.loadUserData(c.env.DB, cipher, userId)
   if (!data.profile || !data.goal) return c.json({ status: 'unavailable' })
@@ -315,14 +315,14 @@ app.delete('/push/subscriptions', async (c) => {
 app.post('/push/test', async (c) => {
   const vapid = await getVapid(c.env)
   if (!vapid) return c.json({ error: '通知の準備ができていません' }, 503)
-  const result = await notify(c.env, vapid, c.get('userId'), { title: 'へるログ', body: 'テスト通知です。毎晩のまとめはこのように届きます' })
+  const result = await notify(c.env, vapid, c.get('userId'), { title: 'へるログ', body: 'テスト通知です。振り返りはこのように届きます' })
   return c.json(result)
 })
 
 export default {
   fetch: app.fetch,
-  // 毎晩の「今日のまとめ」（時刻は wrangler.jsonc の triggers.crons）
+  // 朝の体重がなかった日の「昨日の振り返り」（時刻は wrangler.jsonc の triggers.crons）
   scheduled(_controller, env, ctx) {
-    ctx.waitUntil(runNightlyReviews(env))
+    ctx.waitUntil(runReviewFallback(env))
   },
 } satisfies ExportedHandler<Bindings>
