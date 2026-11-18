@@ -261,6 +261,33 @@ export interface Plan {
   phase: 'before' | 'active' | 'finished'
 }
 
+/** 今週の目標に対して、今どこまで来ているか */
+export interface WeekProgress {
+  /** 今週いちばん新しい日の体重（その日いちばん早い時刻の値）。今週まだ記録がなければ null */
+  latest: WeightEntry | null
+  /** 週末の目標体重まであと何kg（0以下なら達成） */
+  remaining: number | null
+  /** 週の初めの基準体重から減った量（増えていればマイナス） */
+  lost: number | null
+  /** 今週の目標に対する進み具合（0〜1） */
+  ratio: number
+  /** 週末まで、今日を含めて何日 */
+  daysLeft: number
+}
+
+export function weekProgress(week: WeekPlan, weights: WeightEntry[], today: string): WeekProgress {
+  let latest: WeightEntry | null = null
+  for (const w of weights) {
+    if (w.date >= week.startDate && w.date <= today && (!latest || w.date > latest.date)) latest = w
+  }
+  const daysLeft = Math.max(toDayNum(week.endDate) - toDayNum(today) + 1, 0)
+  if (!latest) return { latest, remaining: null, lost: null, ratio: 0, daysLeft }
+  const remaining = latest.weight - week.targetWeight
+  const lost = week.refWeight - latest.weight
+  const ratio = week.targetLoss > 0 ? Math.min(Math.max(lost / week.targetLoss, 0), 1) : 1
+  return { latest, remaining, lost, ratio, daysLeft }
+}
+
 /**
  * 週の開始時点の基準体重。体重は日々ぶれるので直近4日の平均を使い、
  * その期間に記録がなければそれ以前の最新値を使う。

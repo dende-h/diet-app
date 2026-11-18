@@ -1057,3 +1057,21 @@ textarea:focus {
 .reminder-field {
   margin-top: 14px;
 }
+
+/* ホームの「今週の目標」 */
+.week-meter {
+  margin-top: 4px;
+}
+
+.week-numbers {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.week-numbers strong {
+  color: var(--text);
+}

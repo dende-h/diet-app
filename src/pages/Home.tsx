@@ -15,11 +15,13 @@ import {
   mealLabel,
   compareRecords,
   toDayNum,
+  weekProgress,
   weightAsOf,
   type CalorieEstimate,
   type CalorieTarget,
   type EstimateUsage,
   type Plan,
+  type WeightEntry,
   type WeightRecord,
 } from '../../shared/calc'
 import { ApiError, useApi } from '../api'
@@ -88,7 +90,7 @@ export function Home({ date, setDate, today }: Props) {
         total={intakeTotal(intakes, date)}
       />
       <ExerciseCard key={`exercise-${date}`} date={date} today={today} />
-      <WeekCard plan={plan} weight={weightAsOf(daily, today, goal!.startWeight)} />
+      <WeekCard plan={plan} weights={daily} today={today} weight={weightAsOf(daily, today, goal!.startWeight)} />
     </>
   )
 }
@@ -679,7 +681,7 @@ function WeightForm({ date }: { date: string }) {
   )
 }
 
-function WeekCard({ plan, weight }: { plan: Plan; weight: number }) {
+function WeekCard({ plan, weights, today, weight }: { plan: Plan; weights: WeightEntry[]; today: string; weight: number }) {
   const title = (
     <TitleWithHelp title="今週の目標" help="今週の目標について">
       <WeekHelp plan={plan} />
@@ -707,6 +709,9 @@ function WeekCard({ plan, weight }: { plan: Plan; weight: number }) {
   const days = toDayNum(w.endDate) - toDayNum(w.startDate) + 1
   // 1週間あたり体重の1%を超える減量ペースは速すぎるとされる
   const fast = (w.targetLoss * 7) / days > weight * 0.01
+  const p = weekProgress(w, weights, today)
+  const done = p.remaining !== null && p.remaining <= 0
+  const daysText = p.daysLeft <= 1 ? '今日が週の最終日' : `週末まであと${p.daysLeft}日`
 
   return (
     <section className="card">
@@ -720,16 +725,57 @@ function WeekCard({ plan, weight }: { plan: Plan; weight: number }) {
         <p className="big ok">
           <small>目標体重に到達！ キープしましょう</small>
         </p>
+      ) : p.remaining === null ? (
+        <>
+          <p className="big">
+            −{w.targetLoss.toFixed(2)}
+            <small> kg</small>
+          </p>
+          <p className="muted small">今週の体重を記録すると、目標まであと何kgかが出ます。</p>
+        </>
       ) : (
-        <p className="big">
-          −{w.targetLoss.toFixed(2)}
-          <small> kg</small>
-        </p>
+        <>
+          {done ? (
+            <p className="big ok">
+              達成！
+              <small>{p.remaining <= -0.05 ? ` 週末の目標より ${Math.abs(p.remaining).toFixed(1)} kg 軽い` : ' 週末の目標に到達'}</small>
+            </p>
+          ) : (
+            <p className="big">
+              <small>あと </small>
+              {p.remaining < 0.05 ? '0.1' : p.remaining.toFixed(1)}
+              <small>{p.remaining < 0.05 ? ' kg 未満' : ' kg'}</small>
+            </p>
+          )}
+          <div
+            className="meter week-meter"
+            role="progressbar"
+            aria-label="今週の目標の進み具合"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(p.ratio * 100)}
+          >
+            <div className="meter-fill" style={{ width: `${p.ratio * 100}%` }} />
+          </div>
+          <div className="week-numbers small">
+            <span>
+              週初め {w.refWeight.toFixed(1)}
+            </span>
+            <span>
+              <strong>いま {p.latest!.weight.toFixed(1)}</strong>
+              {p.latest!.date !== today && <span className="muted">（{formatDate(p.latest!.date)}）</span>}
+            </span>
+            <span>
+              目標 {w.targetWeight.toFixed(1)} kg
+            </span>
+          </div>
+          <p className="muted small">
+            今週 {p.lost! >= 0 ? `−${p.lost!.toFixed(1)}` : `+${(-p.lost!).toFixed(1)}`} kg（目標 −{w.targetLoss.toFixed(2)} kg）・{daysText}
+          </p>
+        </>
       )}
       <p className="muted small">
-        {formatDate(w.startDate)}〜{formatDate(w.endDate)}・週末の目標 {w.targetWeight.toFixed(1)} kg
-        <br />
-        当初の計画は週 −{plan.initialWeeklyLoss.toFixed(2)} kg
+        {formatDate(w.startDate)}〜{formatDate(w.endDate)}・当初の計画は週 −{plan.initialWeeklyLoss.toFixed(2)} kg
       </p>
       {fast && <p className="warning small">ペースが速めです。無理をせず、期間の延長も検討してください。</p>}
     </section>

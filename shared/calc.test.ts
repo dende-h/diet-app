@@ -10,6 +10,7 @@ import {
   mealLabel,
   movingAverage,
   refWeightAt,
+  weekProgress,
   weightAsOf,
   type Goal,
   type Profile,
@@ -176,5 +177,44 @@ describe('mealLabel', () => {
 
   it('stays within the length limit', () => {
     expect(mealLabel(estimate, 'あ'.repeat(60))).toHaveLength(60)
+  })
+})
+
+describe('weekProgress', () => {
+  const week = { index: 1, startDate: '2026-11-08', endDate: '2026-11-14', refWeight: 61, targetLoss: 0.5, targetWeight: 60.5 }
+
+  it('uses the latest weight this week', () => {
+    const p = weekProgress(
+      week,
+      [
+        { date: '2026-11-07', weight: 59 },
+        { date: '2026-11-09', weight: 60.8 },
+        { date: '2026-11-11', weight: 60.7 },
+      ],
+      '2026-11-12',
+    )
+    expect(p.latest).toEqual({ date: '2026-11-11', weight: 60.7 })
+    expect(p.remaining).toBeCloseTo(0.2)
+    expect(p.lost).toBeCloseTo(0.3)
+    expect(p.ratio).toBeCloseTo(0.6)
+    expect(p.daysLeft).toBe(3)
+  })
+
+  it('caps the ratio and reports reaching the goal', () => {
+    const p = weekProgress(week, [{ date: '2026-11-13', weight: 60.2 }], '2026-11-14')
+    expect(p.remaining).toBeCloseTo(-0.3)
+    expect(p.ratio).toBe(1)
+    expect(p.daysLeft).toBe(1)
+  })
+
+  it('shows no progress when weight went up', () => {
+    const p = weekProgress(week, [{ date: '2026-11-09', weight: 61.4 }], '2026-11-09')
+    expect(p.lost).toBeCloseTo(-0.4)
+    expect(p.ratio).toBe(0)
+  })
+
+  it('has nothing to show before the first weigh-in of the week', () => {
+    const p = weekProgress(week, [{ date: '2026-11-07', weight: 60.9 }], '2026-11-08')
+    expect(p).toMatchObject({ latest: null, remaining: null, lost: null, ratio: 0, daysLeft: 7 })
   })
 })
