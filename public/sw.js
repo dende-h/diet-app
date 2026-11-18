@@ -13,8 +13,8 @@ self.addEventListener('activate', (event) => {
   )
 })
 
-// ---- 通知（昨日の振り返り） ----
-// サーバーが送る本文は { title, body, date }。記録の中身は入っていない
+// ---- 通知（昨日の振り返り・記録のリマインド） ----
+// サーバーが送る本文は { title, body, date, kind }。記録の中身は入っていない
 
 self.addEventListener('push', (event) => {
   let message = {}
@@ -28,7 +28,8 @@ self.addEventListener('push', (event) => {
       body: message.body || '',
       icon: '/icons/icon-192.png',
       lang: 'ja',
-      tag: message.date ? `review-${message.date}` : 'herulog',
+      // 種類ごとに別の通知にする（リマインドが振り返りの通知を消さないように）
+      tag: message.date ? `${message.kind || 'review'}-${message.date}` : 'herulog',
       data: { date: message.date || null },
     }),
   )

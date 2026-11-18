@@ -20,7 +20,7 @@ import { estimateCalories } from './estimate'
 import type { Bindings } from './env'
 import { generateFeedback } from './feedback'
 import { fromB64url, isPushEndpoint } from './push'
-import { allowedUsers, getVapid, notify, runReviewFallback, writeReview } from './reviews'
+import { allowedUsers, getVapid, notify, REMINDER_CRON, runLogReminder, runReviewFallback, writeReview } from './reviews'
 
 const app = new Hono<{ Bindings: Bindings; Variables: { userId: string; cipher: Cipher } }>().basePath('/api')
 
@@ -233,7 +233,13 @@ app.post('/feedbacks/:date/:seq', async (c) => {
 
   if (!(await db.claimFeedback(c.env.DB, userId, d, s))) return c.json({ status: 'pending' })
   try {
-    const content = await generateFeedback(c.env.ANTHROPIC_API_KEY, data, d, s)
+    // 前に書いた文章を渡して、同じことを繰り返さないようにする
+    const past = await db.recentAiTexts(c.env.DB, c.get('cipher'), userId, {
+      until: d,
+      reviewBefore: d,
+      skip: { date: d, seq: s },
+    })
+    const content = await generateFeedback(c.env.ANTHROPIC_API_KEY, data, d, s, past)
     await db.completeFeedback(c.env.DB, c.get('cipher'), userId, d, s, content)
     return c.json({ status: 'done', content })
   } catch (err) {
@@ -311,18 +317,29 @@ app.delete('/push/subscriptions', async (c) => {
   return c.body(null, 204)
 })
 
+// 通知の設定（記録のリマインドのオン・オフ。端末ごとではなく1人1件）
+app.get('/settings', async (c) => c.json(await db.getSettings(c.env.DB, c.get('userId'))))
+
+app.put('/settings', async (c) => {
+  const body = await c.req.json<Record<string, unknown>>()
+  if (typeof body.logReminder !== 'boolean') throw new BadRequest('logReminder must be a boolean')
+  const settings = { logReminder: body.logReminder }
+  await db.saveSettings(c.env.DB, c.get('userId'), settings)
+  return c.json(settings)
+})
+
 // 設定画面の「テスト通知」。自分の端末にだけ送る
 app.post('/push/test', async (c) => {
   const vapid = await getVapid(c.env)
   if (!vapid) return c.json({ error: '通知の準備ができていません' }, 503)
-  const result = await notify(c.env, vapid, c.get('userId'), { title: 'へるログ', body: 'テスト通知です。振り返りはこのように届きます' })
+  const result = await notify(c.env, vapid, c.get('userId'), { title: 'へるログ', body: 'テスト通知です。振り返りやリマインドはこのように届きます' })
   return c.json(result)
 })
 
 export default {
   fetch: app.fetch,
-  // 朝の体重がなかった日の「昨日の振り返り」（時刻は wrangler.jsonc の triggers.crons）
-  scheduled(_controller, env, ctx) {
-    ctx.waitUntil(runReviewFallback(env))
+  // 昼は朝の体重がなかった日の「昨日の振り返り」、夜は記録のリマインド（時刻は wrangler.jsonc の triggers.crons）
+  scheduled(controller, env, ctx) {
+    ctx.waitUntil(controller.cron === REMINDER_CRON ? runLogReminder(env) : runReviewFallback(env))
   },
 } satisfies ExportedHandler<Bindings>

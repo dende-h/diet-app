@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { UserData } from '../shared/calc'
-import { buildDailyReport, buildReport } from './feedback'
+import { reminderBody, type UserData } from '../shared/calc'
+import { buildDailyReport, buildReport, type PastText } from './feedback'
 
 const data: UserData = {
   profile: { sex: 'female', birthYear: 1992, heightCm: 158, activity: 1.375 },
@@ -63,6 +63,21 @@ describe('buildReport', () => {
     expect(second).toContain('今日の体重: 07:05 60.2kg / 21:40 60.9kg')
   })
 
+  it('reports the streak and the change since the start', () => {
+    expect(report).toContain('10/30まで2日連続、直近7日のうち2日')
+    expect(report).toContain('開始時からの変化: -1.8kg（10/30の体重。目標は -5.0kg）')
+  })
+
+  it('appends earlier texts so the AI can avoid repeating them', () => {
+    const past: PastText[] = [
+      { kind: 'feedback', date: '2026-10-29', content: 'earlier feedback' },
+      { kind: 'review', date: '2026-10-28', content: 'earlier review' },
+    ]
+    const withPast = buildReport(data, '2026-10-30', 1, past)
+    expect(withPast).toContain('[10/29の体重の記録へのひとこと]\nearlier feedback\n[10/28の振り返り]\nearlier review')
+    expect(report).not.toContain('これまでにあなたが書いた文章')
+  })
+
   it('requires profile and goal', () => {
     expect(() => buildReport({ ...data, goal: null }, '2026-10-30', 1)).toThrow()
   })
@@ -92,7 +107,34 @@ describe('buildDailyReport', () => {
     expect(report).toContain('10/29（この日）: walk 30min')
   })
 
+  it('counts the streak up to the reviewed day but uses this morning weight', () => {
+    expect(report).toContain('10/29まで1日連続、直近7日のうち1日')
+    expect(report).toContain('開始時からの変化: -1.8kg（10/30の体重')
+  })
+
+  it('appends earlier texts', () => {
+    const past: PastText[] = [{ kind: 'review', date: '2026-10-28', content: 'earlier review' }]
+    expect(buildDailyReport(data, '2026-10-29', past)).toContain('[10/28の振り返り]\nearlier review')
+  })
+
   it('reports a day with no meals', () => {
     expect(buildDailyReport(data, '2026-10-30')).toContain('この日の合計: 記録なし')
+  })
+})
+
+describe('reminderBody', () => {
+  const day = (weights: string[], intakes: string[]) => ({
+    weights: weights.map((date) => ({ date })),
+    intakes: intakes.map((date) => ({ date })),
+  })
+
+  it('names what is still missing today', () => {
+    expect(reminderBody(day([], []), '2026-10-30')).toBe('今日の体重と食事がまだ記録されていません')
+    expect(reminderBody(day(['2026-10-30'], ['2026-10-29']), '2026-10-30')).toBe('今日の食事がまだ記録されていません')
+    expect(reminderBody(day(['2026-10-29'], ['2026-10-30']), '2026-10-30')).toBe('今日の体重がまだ記録されていません')
+  })
+
+  it('stays quiet when both are recorded', () => {
+    expect(reminderBody(day(['2026-10-30'], ['2026-10-30']), '2026-10-30')).toBeNull()
   })
 })

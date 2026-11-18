@@ -128,6 +128,8 @@ export interface PushMessage {
   body: string
   /** 通知を押したときに開く日付 */
   date?: string
+  /** 通知の種類。同じ種類・同じ日付の通知は、端末で新しいものに置き換わる（なければ振り返り） */
+  kind?: 'review' | 'reminder'
 }
 
 /** 通知を1件送る。gone なら端末側で購読がなくなっているので、送り先を消してよい */

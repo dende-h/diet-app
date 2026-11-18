@@ -70,6 +70,18 @@ export const MAX_REVIEW_GENERATIONS = 2
 /** 朝の体重がない日に、昨日の振り返りを自動で作る時刻（日本時間の時）。実際の起動時刻は wrangler.jsonc の triggers.crons（UTC） */
 export const REVIEW_FALLBACK_HOUR = 12
 
+/** その日の体重か食事をまだ記録していないときに、リマインドを通知する時刻（日本時間の時）。起動時刻は wrangler.jsonc の triggers.crons */
+export const LOG_REMINDER_HOUR = 21
+
+/** 今日まだ記録していないもの（体重・食事）から、リマインドの文を作る。そろっていれば null */
+export function reminderBody(data: { weights: { date: string }[]; intakes: { date: string }[] }, today: string): string | null {
+  const weight = data.weights.some((w) => w.date === today)
+  const meal = data.intakes.some((i) => i.date === today)
+  if (weight && meal) return null
+  if (!weight && !meal) return '今日の体重と食事がまだ記録されていません'
+  return weight ? '今日の食事がまだ記録されていません' : '今日の体重がまだ記録されていません'
+}
+
 /** その日に体重・食事・運動のどれかを記録しているか（何もない日はまとめを作らない） */
 export function hasRecords(data: Pick<UserData, 'weights' | 'intakes' | 'exercises'>, date: string): boolean {
   return (

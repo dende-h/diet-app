@@ -19,7 +19,8 @@
     }
   ],
   // 朝の体重を量らなかった日の「昨日の振り返り」。UTC 3:00 = 日本時間 12:00。30分後の2回目は、1回目で失敗した人の分だけ作り直す
-  "triggers": { "crons": ["0 3 * * *", "30 3 * * *"] },
+  // UTC 12:00 = 日本時間 21:00 は記録のリマインド（worker/reviews.ts の REMINDER_CRON と同じ文字列にする）
+  "triggers": { "crons": ["0 3 * * *", "30 3 * * *", "0 12 * * *"] },
   "vars": { "PUSH_SUBJECT": "https://diet-app.dende0206.workers.dev" }
   // シークレット（wrangler secret put で設定）: CLERK_SECRET_KEY, ANTHROPIC_API_KEY, DATA_KEY, VAPID_PRIVATE_KEY
 }

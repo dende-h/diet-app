@@ -1,6 +1,15 @@
 import { SignOutButton, useUser } from '@clerk/react'
-import { useEffect, useState, type FormEvent } from 'react'
-import { ACTIVITY_LEVELS, addDays, localToday, REVIEW_FALLBACK_HOUR, toDayNum, weightAsOf, type Sex } from '../../shared/calc'
+import { useEffect, useRef, useState, type FormEvent } from 'react'
+import {
+  ACTIVITY_LEVELS,
+  addDays,
+  localToday,
+  LOG_REMINDER_HOUR,
+  REVIEW_FALLBACK_HOUR,
+  toDayNum,
+  weightAsOf,
+  type Sex,
+} from '../../shared/calc'
 import { ApiError, useApi } from '../api'
 import {
   currentSubscription,
@@ -261,6 +270,8 @@ function NotificationCard() {
   const api = useApi()
   const [support] = useState(pushSupport)
   const [on, setOn] = useState(false)
+  /** 記録のリマインド（端末ごとではなく1人1件の設定）。読み込むまでは null */
+  const [reminder, setReminder] = useState<boolean | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
 
@@ -270,6 +281,17 @@ function NotificationCard() {
       .then((sub) => setOn(isPushOn(sub)))
       .catch(() => setOn(false))
   }, [support])
+
+  const apiRef = useRef(api)
+  useEffect(() => {
+    apiRef.current = api
+  })
+  useEffect(() => {
+    apiRef
+      .current<{ logReminder: boolean }>('/settings')
+      .then((s) => setReminder(s.logReminder))
+      .catch(() => setReminder(null))
+  }, [])
 
   const run = async (action: () => Promise<string>) => {
     setBusy(true)
@@ -303,6 +325,12 @@ function NotificationCard() {
       setOn(false)
       return 'オフにしました。'
     })
+  const saveReminder = (value: boolean) =>
+    run(async () => {
+      const saved = await api<{ logReminder: boolean }>('/settings', { method: 'PUT', body: { logReminder: value } })
+      setReminder(saved.logReminder)
+      return saved.logReminder ? '記録のリマインドをオンにしました。' : '記録のリマインドをオフにしました。'
+    })
   const test = () =>
     run(async () => {
       const res = await api<{ sent: number }>('/push/test', { method: 'POST' })
@@ -312,11 +340,21 @@ function NotificationCard() {
   return (
     <section className="card">
       <div className="card-title">
-        振り返りの通知 <span className={on ? 'badge ok' : 'badge'}>{on ? 'オン' : 'オフ'}</span>
+        通知 <span className={on ? 'badge ok' : 'badge'}>{on ? 'オン' : 'オフ'}</span>
       </div>
       <p className="muted small">
-        朝の体重を記録しなかった日は、{REVIEW_FALLBACK_HOUR}時ごろにAIが昨日の振り返りを作り、この端末に通知します（体重を記録した日は、その場で今日の画面に出るので通知しません）。通知には体重などの記録の中身は表示しません。
+        この端末に通知を送ります。通知には体重などの記録の中身は表示しません。
       </p>
+      <ul className="muted small notice-list">
+        <li>
+          <strong>昨日の振り返り</strong>：朝の体重を記録しなかった日は、{REVIEW_FALLBACK_HOUR}
+          時ごろにAIが昨日の振り返りを作って知らせます（体重を記録した日は、その場で今日の画面に出るので通知しません）。
+        </li>
+        <li>
+          <strong>記録のリマインド</strong>：{LOG_REMINDER_HOUR}
+          時に、その日の体重か食事がまだ記録されていなければ知らせます。通知をオンにすると、オン・オフを選べます（はじめはオフ）。
+        </li>
+      </ul>
       {support === 'needs-install' && (
         <p className="muted small">
           iPhoneでは、ホーム画面に追加したアプリから通知をオンにできます（Safariの共有ボタン →「ホーム画面に追加」）。
@@ -339,6 +377,26 @@ function NotificationCard() {
               通知をオンにする
             </button>
           )}
+        </div>
+      )}
+      {support === 'ok' && on && reminder !== null && (
+        <div className="field reminder-field">
+          <span className="label">記録のリマインド（{LOG_REMINDER_HOUR}時）</span>
+          <div className="chips" role="group" aria-label="記録のリマインド">
+            {([true, false] as const).map((value) => (
+              <button
+                type="button"
+                key={String(value)}
+                className={reminder === value ? 'chip active' : 'chip'}
+                aria-pressed={reminder === value}
+                disabled={busy}
+                onClick={() => reminder !== value && saveReminder(value)}
+              >
+                {value ? 'オン' : 'オフ'}
+              </button>
+            ))}
+          </div>
+          <span className="muted small">通知をオンにしている、あなたのすべての端末に届きます。</span>
         </div>
       )}
       {message && (

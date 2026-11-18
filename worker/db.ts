@@ -10,6 +10,7 @@ import {
   type WeightRecord,
 } from '../shared/calc'
 import { isEncrypted, type Cipher } from './crypto'
+import type { PastText } from './feedback'
 
 // 体重に関わる値（体重、目標の開始体重・減量kg、AIのひとこと）は暗号化して保存する。
 // 読み書きはここで暗号化・復号するので、ほかの場所では平文のまま扱える。
@@ -313,6 +314,82 @@ export async function releaseReview(db: D1Database, userId: string, date: string
       .prepare("UPDATE daily_reviews SET status = 'done' WHERE user_id = ? AND date = ? AND status = 'pending'")
       .bind(userId, date),
   ])
+}
+
+/**
+ * 前にAIが書いた文章を新しい順に返す（同じことを繰り返さないよう、次に書くときに渡す）。
+ * ひとことは until の日まで（skip の1件は除く）、振り返りは reviewBefore より前の日の分。
+ */
+export async function recentAiTexts(
+  db: D1Database,
+  cipher: Cipher,
+  userId: string,
+  opts: { until: string; reviewBefore: string; skip?: { date: string; seq: number } },
+): Promise<PastText[]> {
+  const [feedbacks, reviews] = await db.batch([
+    db
+      .prepare(
+        `SELECT date, content FROM feedbacks
+         WHERE user_id = ?1 AND status = 'done' AND content != '' AND date <= ?2 AND NOT (date = ?3 AND seq = ?4)
+         ORDER BY date DESC, seq DESC LIMIT 3`,
+      )
+      .bind(userId, opts.until, opts.skip?.date ?? '', opts.skip?.seq ?? 0),
+    db
+      .prepare(
+        `SELECT date, content FROM daily_reviews
+         WHERE user_id = ?1 AND generations > 0 AND date < ?2 ORDER BY date DESC LIMIT 2`,
+      )
+      .bind(userId, opts.reviewBefore),
+  ])
+  const texts: PastText[] = []
+  for (const r of reviews.results as { date: string; content: string }[]) {
+    texts.push({ kind: 'review', date: r.date, content: await cipher.decrypt(r.content, 'daily_reviews.content') })
+  }
+  for (const f of feedbacks.results as { date: string; content: string }[]) {
+    texts.push({ kind: 'feedback', date: f.date, content: await cipher.decrypt(f.content, 'feedbacks.content') })
+  }
+  // 振り返りは翌朝に書くので、同じ日付ならひとことより前に書いたものとして並べる
+  return texts.sort((a, b) => b.date.localeCompare(a.date) || (a.kind === b.kind ? 0 : a.kind === 'feedback' ? -1 : 1))
+}
+
+// ---- 通知の設定（1人1件） ----
+
+export interface UserSettings {
+  /** 夜に、その日の記録がまだのときに知らせる */
+  logReminder: boolean
+}
+
+export async function getSettings(db: D1Database, userId: string): Promise<UserSettings> {
+  const row = await db
+    .prepare('SELECT log_reminder FROM user_settings WHERE user_id = ?')
+    .bind(userId)
+    .first<{ log_reminder: number }>()
+  return { logReminder: row?.log_reminder === 1 }
+}
+
+export async function saveSettings(db: D1Database, userId: string, settings: UserSettings) {
+  await db
+    .prepare(
+      `INSERT INTO user_settings (user_id, log_reminder) VALUES (?, ?)
+       ON CONFLICT (user_id) DO UPDATE SET log_reminder = excluded.log_reminder`,
+    )
+    .bind(userId, settings.logReminder ? 1 : 0)
+    .run()
+}
+
+/** その日に体重・食事を記録しているかだけを調べる（中身は読まない） */
+export async function loadRecordDates(db: D1Database, userId: string, date: string) {
+  const [weights, intakes] = await db.batch([
+    db.prepare('SELECT date FROM weights WHERE user_id = ? AND date = ? LIMIT 1').bind(userId, date),
+    db.prepare('SELECT date FROM intakes WHERE user_id = ? AND date = ? LIMIT 1').bind(userId, date),
+  ])
+  return { weights: weights.results as { date: string }[], intakes: intakes.results as { date: string }[] }
+}
+
+/** 記録のリマインドをオンにしているユーザー */
+export async function listReminderUserIds(db: D1Database): Promise<string[]> {
+  const { results } = await db.prepare('SELECT user_id FROM user_settings WHERE log_reminder = 1').all<{ user_id: string }>()
+  return results.map((r) => r.user_id)
 }
 
 /** プロフィールを登録しているユーザー（振り返りを自動で作る対象） */

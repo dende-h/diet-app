@@ -1043,3 +1043,17 @@ textarea:focus {
 .swatch.line-planned {
   border-top: 2px dashed var(--line-planned);
 }
+
+/* 設定の「通知」カード */
+.notice-list {
+  margin: 8px 0 0;
+  padding-left: 1.2em;
+}
+
+.notice-list li + li {
+  margin-top: 4px;
+}
+
+.reminder-field {
+  margin-top: 14px;
+}

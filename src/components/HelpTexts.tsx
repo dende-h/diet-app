@@ -3,6 +3,7 @@ import {
   ACTIVITY_LEVELS,
   BORDER_RATIO,
   DAILY_ESTIMATE_LIMIT,
+  LOG_REMINDER_HOUR,
   MAX_EXERCISE_LENGTH,
   MAX_REVIEW_GENERATIONS,
   MAX_WEIGHINS_PER_DAY,
@@ -119,6 +120,10 @@ export function ReviewHelp() {
         朝いちばんの体重を記録すると、前の日の体重・食事・運動の記録と今朝の体重をもとに、AIが前の日を振り返ります。前の日の記録がそろった状態で、今朝の体重の結果とあわせて読めます。その日1回目の体重へのひとことの代わりです。
       </p>
       <ul>
+        <li>
+          運動の記録を見て、今日はこんな運動がバランスよさそう、というちょっとした提案もします。続けられていることや成果はほめ、うまくいっていないときは励まします。
+        </li>
+        <li>前に書いた振り返りやひとことをAIに渡して、毎回同じような内容にならないようにしています。</li>
         <li>前の日に何も記録していなければ作られず、ふつうのひとことが届きます。</li>
         <li>
           朝の体重を量らなかった日は、{REVIEW_FALLBACK_HOUR}
@@ -131,8 +136,12 @@ export function ReviewHelp() {
       </ul>
       <h3>通知</h3>
       <p>
-        設定の「振り返りの通知」をオンにすると、{REVIEW_FALLBACK_HOUR}
+        設定の「通知」をオンにすると、{REVIEW_FALLBACK_HOUR}
         時ごろに自動で作ったときにスマホに通知が届きます。通知を押すと、今日の画面が開きます。通知には記録の中身は表示されません。
+      </p>
+      <p>
+        「記録のリマインド」もオンにすると、{LOG_REMINDER_HOUR}
+        時に、その日の体重か食事がまだ記録されていないときに知らせます。
       </p>
     </>
   )

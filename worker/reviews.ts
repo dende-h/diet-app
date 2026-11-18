@@ -1,6 +1,7 @@
 // 「昨日の振り返り」。ふつうは朝いちばんの体重を記録したときにアプリから作る（POST /reviews/:date）。
 // 体重を量らなかった日は、昼に cron（wrangler.jsonc の triggers）で作り、スマホに通知する。
-import { addDays, hasRecords, type UserData } from '../shared/calc'
+// 夜には、その日の記録がまだの人にリマインドを通知する（設定でオンにした人だけ）。
+import { addDays, hasRecords, reminderBody, type UserData } from '../shared/calc'
 import { Cipher } from './crypto'
 import * as db from './db'
 import type { Bindings } from './env'
@@ -17,6 +18,9 @@ export function allowedUsers(env: Bindings): string[] | null {
   return ids?.length ? ids : null
 }
 
+/** 記録のリマインドを送る cron（wrangler.jsonc の triggers.crons と同じ文字列。UTC 12:00 = 日本時間 21:00） */
+export const REMINDER_CRON = '0 12 * * *'
+
 export type ReviewResult = 'done' | 'pending' | 'error'
 
 /** まとめを作って保存する。regenerate ならできているものを作り直す */
@@ -30,7 +34,9 @@ export async function writeReview(
 ): Promise<ReviewResult> {
   if (!(await db.claimReview(env.DB, userId, date, regenerate))) return 'pending'
   try {
-    const content = await generateDailyReview(env.ANTHROPIC_API_KEY, data, date)
+    // 前に書いた文章（振り返る日の翌日＝今日までのひとこと、前の日までの振り返り）を渡して、繰り返しを避ける
+    const past = await db.recentAiTexts(env.DB, cipher, userId, { until: addDays(date, 1), reviewBefore: date })
+    const content = await generateDailyReview(env.ANTHROPIC_API_KEY, data, date, past)
     await db.completeReview(env.DB, cipher, userId, date, content)
     return 'done'
   } catch (err) {
@@ -90,6 +96,26 @@ export async function runReviewFallback(env: Bindings, now = new Date()) {
       await notify(env, vapid, userId, { title: '昨日の振り返り', body: '昨日の記録をAIが振り返りました', date: today })
     } catch (err) {
       console.error('review fallback failed', err)
+    }
+  }
+}
+
+/** 夜のリマインド。オンにしている人のうち、今日の体重か食事をまだ記録していない人に通知する */
+export async function runLogReminder(env: Bindings, now = new Date()) {
+  const today = japanDate(now)
+  const vapid = await getVapid(env).catch((err) => {
+    console.error('invalid VAPID_PRIVATE_KEY', err)
+    return null
+  })
+  if (!vapid) return
+  const allowed = allowedUsers(env)
+  const userIds = (await db.listReminderUserIds(env.DB)).filter((id) => !allowed || allowed.includes(id))
+  for (const userId of userIds) {
+    try {
+      const body = reminderBody(await db.loadRecordDates(env.DB, userId, today), today)
+      if (body) await notify(env, vapid, userId, { title: '記録のリマインド', body, date: today, kind: 'reminder' })
+    } catch (err) {
+      console.error('log reminder failed', err)
     }
   }
 }
